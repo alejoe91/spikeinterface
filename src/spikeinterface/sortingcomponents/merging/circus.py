@@ -21,12 +21,14 @@ class CircusMerging(BaseMergingEngine):
             "minimum_spikes": 50,
             "corr_diff_thresh": 0.5,
             "template_metric": "cosine",
+            "template_diff_thresh" : 0.25,
             "firing_contamination_balance": 0.5,
             "num_channels": 5,
             "num_shift": 5,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
+            "template_diff_thresh" : 0.25,
             "presence_distance_threshold": 0.1,
             "firing_contamination_balance": 0.5,
             "template_metric": "l1",
@@ -55,7 +57,7 @@ class CircusMerging(BaseMergingEngine):
             self.analyzer.compute(["random_spikes", "templates"])
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
 
-        self.analyzer.compute("template_similarity")
+        self.analyzer.compute("template_similarity", method='l2_normalized', support='union_if_intersection', max_lag_ms=0.2)
 
     def run(self, extra_outputs=False):
         curation_kwargs = self.params.get("curation_kwargs", None)
