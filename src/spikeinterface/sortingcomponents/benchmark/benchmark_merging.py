@@ -106,10 +106,16 @@ class MergingStudy(BenchmarkStudy):
 
     def plot_unit_counts(self, case_keys=None, figsize=None, **extra_kwargs):
         from spikeinterface.widgets.widget_list import plot_study_unit_counts
+
         plot_study_unit_counts(self, case_keys, figsize=figsize, **extra_kwargs)
 
     def get_splitted_pairs(self, case_key):
         return self.benchmarks[case_key].splitted_cells
+
+    def get_splitted_pairs_index(self, case_key, pair):
+        for count, i in enumerate(self.benchmarks[case_key].splitted_cells):
+            if i == pair:
+                return count
 
     def plot_splitted_amplitudes(self, case_key, pair_index=0):
         analyzer = self.get_sorting_analyzer(case_key)
@@ -130,7 +136,7 @@ class MergingStudy(BenchmarkStudy):
         if analyzer.get_extension("spike_amplitudes") is None:
             analyzer.compute(["spike_amplitudes"])
         plot_unit_templates(analyzer, unit_ids=self.get_splitted_pairs(case_key)[pair_index])
-    
+
     def plot_potential_merges(self, case_key, min_snr=None):
         analyzer = self.get_sorting_analyzer(case_key)
         mylist = self.get_splitted_pairs(case_key)
@@ -154,6 +160,7 @@ class MergingStudy(BenchmarkStudy):
                 if (i[0] in select_from) or (i[1] in select_from):
                     mylist_selection += [i]
             mylist = mylist_selection
-            
+
         from spikeinterface.widgets import plot_potential_merges
-        plot_potential_merges(analyzer, mylist , backend='ipywidgets')
+
+        plot_potential_merges(analyzer, mylist, backend="ipywidgets")
