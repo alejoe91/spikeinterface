@@ -21,12 +21,12 @@ class CircusMerging(BaseMergingEngine):
             "minimum_spikes": 50,
             "corr_diff_thresh": 0.5,
             "maximum_distance_um" : 50,
-            "template_diff_thresh" : 0.5,
+            "template_diff_thresh" : 0.3,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
-            "template_diff_thresh" : 0.5,
             "maximum_distance_um" : 50,
+            "template_diff_thresh" : 0.3,
             "presence_distance_threshold": 0.1,
         },
     }
@@ -52,8 +52,8 @@ class CircusMerging(BaseMergingEngine):
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
 
         self.analyzer.compute("template_similarity", 
-                              method='l2_normalized', 
-                              support='union_if_intersection', 
+                              method='cosine', 
+                              support='union', 
                               max_lag_ms=0.2)
 
     def run(self, extra_outputs=False):
