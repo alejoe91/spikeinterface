@@ -351,8 +351,6 @@ class LussacMerging(BaseMergingEngine):
         "templates": None,
         "minimum_spikes": 50,
         "refractory_period": (0.3, 1.0),
-        "template_metric": "l1",
-        "num_channels": 5,
         "verbose": False,
     }
 
@@ -375,6 +373,11 @@ class LussacMerging(BaseMergingEngine):
             self.analyzer = create_sorting_analyzer(sorting, recording, format="memory")
             self.analyzer.compute(["random_spikes", "templates"])
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+
+        self.analyzer.compute("template_similarity", 
+                              method='cosine', 
+                              support='union', 
+                              max_lag_ms=0.2)
 
     def run(self, extra_outputs=False):
         merges = lussac_merge(self.analyzer, **self.params)
