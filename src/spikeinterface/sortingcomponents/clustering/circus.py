@@ -56,10 +56,10 @@ class CircusClustering:
             "recursive_depth": 3,
             "returns_split_count": True,
         },
-        "radius_um": 100,
+        "radius_um": 50,
         "n_svd": [5, 2],
-        "ms_before": 0.5,
-        "ms_after": 0.5,
+        "ms_before": 1,
+        "ms_after": 1,
         "rank": 5,
         "noise_levels": None,
         "tmp_folder": None,
@@ -96,6 +96,9 @@ class CircusClustering:
         )
 
         wfs = few_wfs[:, :, 0]
+        norms = np.linalg.norm(wfs, axis=1)
+        wfs /= norms[:, None]
+
         from sklearn.decomposition import TruncatedSVD
 
         tsvd = TruncatedSVD(params["n_svd"][0])
