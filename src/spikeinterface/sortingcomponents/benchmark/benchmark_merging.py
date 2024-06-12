@@ -164,3 +164,27 @@ class MergingStudy(BenchmarkStudy):
         from spikeinterface.widgets import plot_potential_merges
 
         plot_potential_merges(analyzer, mylist, backend=backend)
+    
+    def get_missed_merges(self, case_key):
+        analyzer = self.get_sorting_analyzer(case_key)
+        mylist = self.get_splitted_pairs(case_key)
+        found_merges = list(self.get_result(case_key)["merges"])
+
+        if analyzer.get_extension("spike_amplitudes") is None:
+            analyzer.compute(["spike_amplitudes"])
+        if analyzer.get_extension("correlograms") is None:
+            analyzer.compute(["correlograms"])
+        
+        missed_merges = []
+
+        for i in mylist:
+            if list(i) not in found_merges:
+                missed_merges += [i]
+        return missed_merges
+
+    def plot_missed_merges(self, case_key, backend="ipywidgets"):
+        
+        analyzer = self.get_sorting_analyzer(case_key)
+        from spikeinterface.widgets import plot_potential_merges
+        missed_merges = self.get_missed_merges(case_key)
+        plot_potential_merges(analyzer, missed_merges, backend=backend)

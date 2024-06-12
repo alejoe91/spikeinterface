@@ -114,7 +114,9 @@ def get_potential_temporal_splits(
     template_metric="l1",
     maximum_distance_um=150.0,
     peak_sign="neg",
+    pairs=None,
     **presence_distance_kwargs,
+    
 ):
     """
     Algorithm to find and check potential temporal merges between units.
@@ -224,6 +226,10 @@ def get_potential_temporal_splits(
     # STEP 5 : validate the potential merges with CC increase the contamination quality metrics
     if "presence_distance" in steps:
         presence_distances = compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs)
+        # if pairs is not None:
+        #     ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
+        #     ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
+        #     print(presence_distances[ind_1, ind_2].mean())
         pair_mask = pair_mask & (presence_distances < presence_distance_threshold)
 
     # STEP 6 : validate the potential merges with CC increase the contamination quality metrics

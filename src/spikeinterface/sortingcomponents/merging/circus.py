@@ -27,7 +27,7 @@ class CircusMerging(BaseMergingEngine):
             "minimum_spikes": 50,
             "maximum_distance_um" : 50,
             "template_diff_thresh" : 0.3,
-            "presence_distance_threshold": 0.1,
+            "presence_distance_threshold": 0.2,
         },
     }
 
