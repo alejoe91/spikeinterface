@@ -239,7 +239,6 @@ def lussac_merge(
     num_channels: int = 5,
     template_metric="l1",
     p_value: float = 0.2,
-    mypairs=None
 ) -> list[tuple]:
     """
     Looks at a sorting analyzer, and returns a list of potential pairwise merges.
@@ -262,13 +261,13 @@ def lussac_merge(
         The maximum shift when comparing the templates (in number of time samples).
     max_channels : int
         The maximum number of channels to consider when comparing the templates.
-    p_value : float, default: 0.4
+    p_value : float, default: 0.2
         The minimal p_value to be considered for putative merges
     """
 
     assert HAVE_NUMBA, "Numba should be installed"
     sorting = analyzer.sorting
-    pairs = []
+    potential_merges = []
     sf = analyzer.recording.sampling_frequency
     n_frames = analyzer.recording.get_num_samples()
     sparsity = analyzer.sparsity
@@ -278,10 +277,6 @@ def lussac_merge(
     template_similarities = analyzer.get_extension('template_similarity')
     if template_similarities is not None:
         template_diff_thresh = 1 - template_diff_thresh
-
-    p_values = {}
-    for key in ['yes', 'no']:
-        p_values[key] = {'p' : [], 'CC' : []}
 
     if sparsity is None:
         adaptative_masks = False
@@ -354,24 +349,13 @@ def lussac_merge(
             CC, p = estimate_cross_contamination(
                 spike_train1, spike_train2, sf, n_frames, refractory_period, limit=CC_threshold
             )
-            if mypairs is not None:
-                if (unit_id1, unit_id2) in mypairs:
-                    p_values['yes']['p'] += [p]
-                    p_values['yes']['CC'] += [CC]
-                else:
-                    p_values['no']['p'] += [p]
-                    p_values['no']['CC'] += [CC]
 
-            if (p < p_value) or (CC > CC_threshold):
+            if (p < p_value):
                 continue
             
-            pairs.append((unit_id1, unit_id2))
+            potential_merges.append((unit_id1, unit_id2))
     
-    if mypairs is not None:
-        for key in ['yes', 'no']:
-            for a in ['p', 'CC']:
-                print(key, a, len(p_values[key][a]), np.nanmean(p_values[key][a]), np.nanstd(p_values[key][a]))
-    return pairs
+    return potential_merges
 
 
 class LussacMerging(BaseMergingEngine):
@@ -407,10 +391,7 @@ class LussacMerging(BaseMergingEngine):
             self.analyzer.compute(["random_spikes", "templates"])
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
 
-        self.analyzer.compute("template_similarity", 
-                              method='cosine', 
-                              support='union', 
-                              max_lag_ms=0.2)
+        self.analyzer.compute("template_similarity")
 
     def run(self, extra_outputs=False):
         merges = lussac_merge(self.analyzer, **self.params)
