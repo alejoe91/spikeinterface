@@ -19,15 +19,15 @@ class CircusMerging(BaseMergingEngine):
         "verbose": True,
         "curation_kwargs": {
             "minimum_spikes": 50,
-            "corr_diff_thresh": 0.5,
-            "maximum_distance_um" : 50,
-            "template_diff_thresh" : 0.3,
+            "corr_diff_thresh": 0.25,
+            "maximum_distance_um" : 10,
+            "template_diff_thresh" : 1,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
-            "maximum_distance_um" : 50,
-            "template_diff_thresh" : 0.3,
-            "presence_distance_threshold": 0.2,
+            "maximum_distance_um" : 10,
+            "template_diff_thresh" : 1,
+            "presence_distance_threshold": 0.1,
         },
     }
 

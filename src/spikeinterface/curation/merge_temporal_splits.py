@@ -101,7 +101,7 @@ def compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs):
 def get_potential_temporal_splits(
     sorting_analyzer,
     minimum_spikes=100,
-    presence_distance_threshold=0.1,
+    presence_distance_threshold=0.3,
     template_diff_thresh=0.25,
     censored_period_ms=0.3,
     refractory_period_ms=1.0,
@@ -114,7 +114,7 @@ def get_potential_temporal_splits(
     template_metric="l1",
     maximum_distance_um=150.0,
     peak_sign="neg",
-    pairs=None,
+    mypairs=None,
     **presence_distance_kwargs,
     
 ):
@@ -155,9 +155,9 @@ def get_potential_temporal_splits(
             "min_spikes",
             "remove_contaminated",
             "unit_positions",
-            "template_similarity",
+            #"template_similarity",
             "presence_distance",
-            "check_increase_score",
+            #"check_increase_score",
         ]
 
     n = unit_ids.size
@@ -195,6 +195,11 @@ def get_potential_temporal_splits(
             unit_locations = chan_loc[unit_max_chan, :]
 
         unit_distances = scipy.spatial.distance.cdist(unit_locations, unit_locations, metric="euclidean")
+        if mypairs is not None:
+            pairs = np.array(mypairs)
+            ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
+            ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
+            print(unit_distances[ind_1, ind_2].mean(), unit_distances[ind_1, ind_2].std())
         pair_mask = pair_mask & (unit_distances <= maximum_distance_um)
 
     # STEP 4 : check if potential merge with CC also have template similarity
@@ -208,6 +213,11 @@ def get_potential_temporal_splits(
         if template_similarity_ext is not None:
             templates_similarity = template_similarity_ext.get_data()
             pair_mask = pair_mask & (templates_similarity > (1 - template_diff_thresh))
+            if mypairs is not None:
+                pairs = np.array(mypairs)
+                ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
+                ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
+                print(templates_similarity[ind_1, ind_2].mean(), templates_similarity[ind_1, ind_2].std())
         else:
             templates_array = templates_ext.get_data(outputs="numpy")
 
@@ -226,12 +236,12 @@ def get_potential_temporal_splits(
     # STEP 5 : validate the potential merges with CC increase the contamination quality metrics
     if "presence_distance" in steps:
         presence_distances = compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs)
-        # if pairs is not None:
-        #     ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
-        #     ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
-        #     print(presence_distances[ind_1, ind_2].mean())
+        if mypairs is not None:
+            pairs = np.array(mypairs)
+            ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
+            ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
+            print(presence_distances[ind_1, ind_2].mean(), presence_distances[ind_1, ind_2].std())
         pair_mask = pair_mask & (presence_distances < presence_distance_threshold)
-
     # STEP 6 : validate the potential merges with CC increase the contamination quality metrics
     if "check_increase_score" in steps:
         pair_mask, pairs_decreased_score = check_improve_contaminations_score(
