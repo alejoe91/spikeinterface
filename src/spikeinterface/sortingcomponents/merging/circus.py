@@ -19,7 +19,7 @@ class CircusMerging(BaseMergingEngine):
         "verbose": True,
         "curation_kwargs": {
             "minimum_spikes": 50,
-            "corr_diff_thresh": 0.25,
+            "corr_diff_thresh": 0.5,
             "maximum_distance_um" : 10,
             "template_diff_thresh" : 1,
         },
@@ -27,7 +27,7 @@ class CircusMerging(BaseMergingEngine):
             "minimum_spikes": 50,
             "maximum_distance_um" : 10,
             "template_diff_thresh" : 1,
-            "presence_distance_threshold": 0.1,
+            "presence_distance_threshold": 100,
         },
     }
 
