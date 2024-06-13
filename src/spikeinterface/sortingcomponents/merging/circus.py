@@ -50,7 +50,7 @@ class CircusMerging(BaseMergingEngine):
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
 
         self.analyzer.compute("template_similarity", 
-                              method='cosine', 
+                              method='l1', 
                               support='union', 
                               max_lag_ms=0.2)
 
