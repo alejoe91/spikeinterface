@@ -17,10 +17,10 @@ class ComputeTemplateSimilarity(AnalyzerExtension):
     sorting_analyzer : SortingAnalyzer
         The SortingAnalyzer object
     method : str, default: "cosine"
-        The method to compute the similarity. Can be in ["l2", "l1", "cosine"]
+        The method to compute the similarity. Can be in ["cosine", "l2", "l1"]
     max_lag_ms : float, default 0
         If specified, the best distance for all given lag within max_lag_ms is kept, for every template
-    support : str, default "dense"
+    support : str, default "union"
         Support that should be considered to compute the distances between the templates, given their sparsities.
         Can be either ["dense", "union", "intersection"]
 
@@ -45,7 +45,7 @@ class ComputeTemplateSimilarity(AnalyzerExtension):
     def __init__(self, sorting_analyzer):
         AnalyzerExtension.__init__(self, sorting_analyzer)
 
-    def _set_params(self, method="cosine", max_lag_ms=0, support="dense"):
+    def _set_params(self, method="cosine", max_lag_ms=0, support="union"):
         params = dict(method=method, max_lag_ms=max_lag_ms, support=support)
         return params
 
@@ -88,6 +88,9 @@ compute_template_similarity = ComputeTemplateSimilarity.function_factory()
 def compute_similarity_with_templates_array(templates_array, other_templates_array, method, n_shifts, mask=None):
 
     import sklearn.metrics.pairwise
+
+    if method == "cosine_similarity":
+        method = "cosine"
 
     all_metrics = ["cosine", "l1", "l2"]
 
