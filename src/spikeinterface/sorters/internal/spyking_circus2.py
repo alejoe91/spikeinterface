@@ -303,11 +303,11 @@ class Spykingcircus2Sorter(ComponentsBasedSorter):
         merging_params = params["merging"].copy()
 
         if len(merging_params) > 0:
-            if params["motion_correction"] and motion_folder is not None:
-                from spikeinterface.preprocessing.motion import load_motion_info
+            # if params["motion_correction"] and motion_folder is not None:
+            #     from spikeinterface.preprocessing.motion import load_motion_info
 
-                motion_info = load_motion_info(motion_folder)
-                merging_params["maximum_distance_um"] = max(50, 2 * np.abs(motion_info["motion"]).max())
+            #     motion_info = load_motion_info(motion_folder)
+            #     merging_params["maximum_distance_um"] = max(50, 2 * np.abs(motion_info["motion"]).max())
 
             # peak_sign = params['detection'].get('peak_sign', 'neg')
             # best_amplitudes = get_template_extremum_amplitude(templates, peak_sign=peak_sign)
