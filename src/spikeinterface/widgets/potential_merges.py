@@ -78,7 +78,7 @@ class PotentialMergesWidget(BaseWidget):
         width_cm = backend_kwargs["width_cm"]
         height_cm = backend_kwargs["height_cm"] * 3
 
-        ratios = [0.15, 0.85]
+        ratios = [0.2, 0.8]
 
         with plt.ioff():
             output = W.Output()
@@ -121,12 +121,16 @@ class PotentialMergesWidget(BaseWidget):
 
         options = ["-".join([str(u) for u in m]) for m in data_plot["potential_merges"]]
         value = options[0]
-        self.unit_selector = W.Dropdown(options=options, value=value, layout=W.Layout(width="3cm"))
+        self.unit_selector_label = W.Label(value="Potential merges:")
+        self.unit_selector = W.Dropdown(options=options, value=value, layout=W.Layout(width="80%"))
         self.previous_num_merges = len(data_plot["potential_merges"][0])
-        self.scaler = ScaleWidget(value=1.0)
-        self.widen_narrow = WidenNarrowWidget(value=1.0)
+        self.scaler = ScaleWidget(value=1.0, layout=W.Layout(width="80%"))
+        self.widen_narrow = WidenNarrowWidget(value=1.0, layout=W.Layout(width="80%"))
 
-        left_sidebar = W.VBox([self.unit_selector, self.scaler, self.widen_narrow], layout=W.Layout(width="3cm"))
+        left_sidebar = W.VBox(
+            [self.unit_selector_label, self.unit_selector, self.scaler, self.widen_narrow],
+            layout=W.Layout(width="100%"),
+        )
 
         self.widget = W.AppLayout(
             center=self.figure.canvas,
@@ -135,7 +139,8 @@ class PotentialMergesWidget(BaseWidget):
         )
 
         if len(np.unique([len(m) for m in self.data_plot["potential_merges"]])) == 1:
-            ncols = 2 * len(self.data_plot)
+            # in this case we multiply the number of columns by 3 to have 2/3 of the space for the templates
+            ncols = 3 * len(self.data_plot["potential_merges"][0])
         else:
             ncols = lcm(*[len(m) for m in self.data_plot["potential_merges"]])
         right_axes = int(ncols * 2 / 3)
@@ -196,8 +201,9 @@ class PotentialMergesWidget(BaseWidget):
     def _update_plot(self, change=None):
 
         merge_units = self.unit_selector.value
-        channel_locations = self.data_plot["sorting_analyzer"].get_channel_locations()
-        unit_ids = self.data_plot["sorting_analyzer"].unit_ids
+        sorting_analyzer = self.data_plot["sorting_analyzer"]
+        channel_locations = sorting_analyzer.get_channel_locations()
+        unit_ids = sorting_analyzer.unit_ids
 
         # unroll the merges
         unit_ids_str = [str(u) for u in unit_ids]
@@ -220,6 +226,12 @@ class PotentialMergesWidget(BaseWidget):
         unit_template_data_plot["set_title"] = False
         unit_template_data_plot["scale"] = self.scaler.value
         unit_template_data_plot["widen_narrow_scale"] = self.widen_narrow.value
+        # update templates and shading
+        templates_ext = sorting_analyzer.get_extension("templates")
+        unit_template_data_plot["templates"] = templates_ext.get_templates(unit_ids=plot_unit_ids, operator="average")
+        unit_template_data_plot["templates_shading"] = self.w_templates._get_template_shadings(
+            plot_unit_ids, self.w_templates.data_plot["templates_percentile_shading"]
+        )
         self.w_templates.plot_matplotlib(unit_template_data_plot, ax=self.ax_templates, axes=None, **backend_kwargs_mpl)
         self.ax_templates.axis("off")
         self.w_templates._plot_probe(self.ax_probe, channel_locations, plot_unit_ids)

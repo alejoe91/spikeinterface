@@ -16,16 +16,18 @@ class CircusMerging(BaseMergingEngine):
 
     default_params = {
         "templates": None,
-        "verbose": False,
+        "verbose": True,
         "curation_kwargs": {
             "minimum_spikes": 50,
             "corr_diff_thresh": 0.5,
-            "template_diff_thresh" : 0.3,
+            "maximum_distance_um" : 10,
+            "template_diff_thresh" : 1,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
-            "template_diff_thresh" : 0.3,
-            "presence_distance_threshold": 0.1,
+            "maximum_distance_um" : 10,
+            "template_diff_thresh" : 1,
+            "presence_distance_threshold": 100,
         },
     }
 

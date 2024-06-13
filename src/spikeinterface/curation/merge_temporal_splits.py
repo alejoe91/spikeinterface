@@ -40,18 +40,21 @@ def presence_distance(sorting, unit1, unit2, bin_duration_s=2, percentile_norm=9
 
     h1, _ = np.histogram(st1, bins)
     h1 = h1.astype(float)
-    norm_value1 = np.percentile(h1, percentile_norm)
+    #norm_value1 = np.linalg.norm(h1)
 
     h2, _ = np.histogram(st2, bins)
     h2 = h2.astype(float)
-    norm_value2 = np.percentile(h2, percentile_norm)
+    #norm_value2 = np.linalg.norm(h2)#np.percentile(h2, percentile_norm)
 
-    if not np.isnan(norm_value1) and not np.isnan(norm_value2) and norm_value1 > 0 and norm_value2 > 0:
-        h1 = h1 / norm_value1
-        h2 = h2 / norm_value2
-        d = np.sum(np.abs(h1 + h2 - np.ones_like(h1))) / sorting.get_total_duration()
-    else:
-        d = 1.0
+    # if not np.isnan(norm_value1) and not np.isnan(norm_value2) and norm_value1 > 0 and norm_value2 > 0:
+    #     h1 = h1 / norm_value1
+    #     h2 = h2 / norm_value2
+    #     d = np.sum(np.abs(h1 + h2 - np.ones_like(h1))) / sorting.get_total_duration()
+    # else:
+    #     d = 1.0
+    import scipy
+    xaxis = bins[1:]/sorting.sampling_frequency
+    d = scipy.stats.wasserstein_distance(xaxis, xaxis, h1, h2)
 
     return d
 
@@ -101,7 +104,7 @@ def compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs):
 def get_potential_temporal_splits(
     sorting_analyzer,
     minimum_spikes=100,
-    presence_distance_threshold=0.1,
+    presence_distance_threshold=50,
     template_diff_thresh=0.25,
     censored_period_ms=0.3,
     refractory_period_ms=1.0,
@@ -114,7 +117,9 @@ def get_potential_temporal_splits(
     template_metric="l1",
     maximum_distance_um=150.0,
     peak_sign="neg",
+    mypairs=None,
     **presence_distance_kwargs,
+    
 ):
     """
     Algorithm to find and check potential temporal merges between units.
@@ -153,9 +158,9 @@ def get_potential_temporal_splits(
             "min_spikes",
             "remove_contaminated",
             "unit_positions",
-            "template_similarity",
+            #"template_similarity",
             "presence_distance",
-            "check_increase_score",
+            #"check_increase_score",
         ]
 
     n = unit_ids.size
@@ -193,6 +198,11 @@ def get_potential_temporal_splits(
             unit_locations = chan_loc[unit_max_chan, :]
 
         unit_distances = scipy.spatial.distance.cdist(unit_locations, unit_locations, metric="euclidean")
+        if mypairs is not None:
+            pairs = np.array(mypairs)
+            ind_1 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 0])
+            ind_2 = sorting_analyzer.sorting.ids_to_indices(pairs[:, 1])
+            print(unit_distances[ind_1, ind_2].mean(), unit_distances[ind_1, ind_2].std())
         pair_mask = pair_mask & (unit_distances <= maximum_distance_um)
 
     # STEP 4 : check if potential merge with CC also have template similarity
@@ -205,7 +215,7 @@ def get_potential_temporal_splits(
         template_similarity_ext = sorting_analyzer.get_extension("template_similarity")
         if template_similarity_ext is not None:
             templates_similarity = template_similarity_ext.get_data()
-            pair_mask = pair_mask & (templates_similarity > (1 - template_diff_thresh))
+            templates_diff = 1 - templates_similarity
         else:
             templates_array = templates_ext.get_data(outputs="numpy")
 
@@ -219,13 +229,12 @@ def get_potential_temporal_splits(
                 sparsity=sorting_analyzer.sparsity,
             )
 
-            pair_mask = pair_mask & (templates_diff < template_diff_thresh)
+        pair_mask = pair_mask & (templates_diff < template_diff_thresh)
 
     # STEP 5 : validate the potential merges with CC increase the contamination quality metrics
     if "presence_distance" in steps:
         presence_distances = compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs)
-        pair_mask = pair_mask & (presence_distances < presence_distance_threshold)
-
+        pair_mask = pair_mask & (presence_distances > presence_distance_threshold)
     # STEP 6 : validate the potential merges with CC increase the contamination quality metrics
     if "check_increase_score" in steps:
         pair_mask, pairs_decreased_score = check_improve_contaminations_score(
@@ -244,6 +253,7 @@ def get_potential_temporal_splits(
     if extra_outputs:
         outs = dict(
             templates_diff=templates_diff,
+            unit_distances=unit_distances,
             presence_distances=presence_distances,
             pairs_decreased_score=pairs_decreased_score,
         )
