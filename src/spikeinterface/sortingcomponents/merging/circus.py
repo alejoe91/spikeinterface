@@ -5,7 +5,6 @@ from .main import BaseMergingEngine
 from spikeinterface.core.sortinganalyzer import create_sorting_analyzer
 from spikeinterface.core.analyzer_extension_core import ComputeTemplates
 from spikeinterface.curation.auto_merge import get_potential_auto_merge
-from spikeinterface.curation.merge_temporal_splits import get_potential_temporal_splits
 from spikeinterface.sortingcomponents.merging.tools import resolve_merging_graph, apply_merges_to_sorting
 
 
@@ -20,15 +19,15 @@ class CircusMerging(BaseMergingEngine):
         "curation_kwargs": {
             "minimum_spikes": 50,
             "corr_diff_thresh": 0.5,
-            "maximum_distance_um" : 10,
+            "maximum_distance_um": 10,
             "presence_distance_thresh": 100,
-            "template_diff_thresh" : 1,
+            "template_diff_thresh": 1,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
-            "maximum_distance_um" : 10,
+            "maximum_distance_um": 10,
             "presence_distance_thresh": 100,
-            "template_diff_thresh" : 1,
+            "template_diff_thresh": 1,
         },
     }
 
@@ -67,7 +66,7 @@ class CircusMerging(BaseMergingEngine):
             print(f"{len(merges)} merges have been detected via auto merges")
         temporal_splits_kwargs = self.params.get("temporal_splits_kwargs", None)
         if temporal_splits_kwargs is not None:
-            merges += get_potential_auto_merge(self.analyzer, **temporal_splits_kwargs, preset='temporal_splits')
+            merges += get_potential_auto_merge(self.analyzer, **temporal_splits_kwargs, preset="temporal_splits")
             if self.verbose:
                 print(f"{len(merges)} merges have been detected via additional temporal splits")
         merges = resolve_merging_graph(self.sorting, merges)
