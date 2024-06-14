@@ -44,7 +44,7 @@ class PotentialMergesWidget(BaseWidget):
 
         self.check_extensions(sorting_analyzer, ["templates", "spike_amplitudes", "correlograms"])
 
-        unique_merge_units = np.unique([u for merge in potential_merges for u in merge])
+        self.unique_merge_units = np.unique([u for merge in potential_merges for u in merge])
         if unit_colors is None:
             unit_colors = get_some_colors(sorting_analyzer.unit_ids)
 
@@ -54,7 +54,7 @@ class PotentialMergesWidget(BaseWidget):
             unit_colors=unit_colors,
             segment_index=segment_index,
             max_spikes_per_unit=max_spikes_per_unit,
-            unique_merge_units=unique_merge_units,
+            unique_merge_units=self.unique_merge_units,
         )
 
         BaseWidget.__init__(self, plot_data, backend=backend, **backend_kwargs)
@@ -237,6 +237,10 @@ class PotentialMergesWidget(BaseWidget):
         self.w_templates._plot_probe(self.ax_probe, channel_locations, plot_unit_ids)
         crosscorrelograms_data_plot = self.w_crosscorrelograms.data_plot.copy()
         crosscorrelograms_data_plot["unit_ids"] = plot_unit_ids
+        index = np.flatnonzero(np.isin(self.unique_merge_units, plot_unit_ids))
+        data = crosscorrelograms_data_plot["correlograms"]
+        data = data[index][:, index]
+        crosscorrelograms_data_plot["correlograms"] = data
         self.w_crosscorrelograms.plot_matplotlib(
             crosscorrelograms_data_plot, axes=self.axes_cc, ax=None, **backend_kwargs_mpl
         )
