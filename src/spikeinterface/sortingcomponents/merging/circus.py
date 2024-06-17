@@ -16,25 +16,24 @@ class CircusMerging(BaseMergingEngine):
     default_params = {
         "templates": None,
         "verbose": True,
-        "similarity_kwargs" : {"method" : "l2", 
-                               "support" : "union", 
-                               "max_lag_ms" : 0.2},
+        "remove_emtpy" : True,
+        "similarity_kwargs": {"method": "l2", "support": "union", "max_lag_ms": 0.2},
         "curation_kwargs": {
             "minimum_spikes": 50,
             "corr_diff_thresh": 0.5,
             "maximum_distance_um": 20,
             "presence_distance_thresh": 100,
             "template_diff_thresh": 0.3,
-            "bin_ms" : 1,
-            "window_ms": 250
+            "bin_ms": 1,
+            "window_ms": 250,
         },
         "temporal_splits_kwargs": {
             "minimum_spikes": 50,
             "maximum_distance_um": 20,
             "presence_distance_thresh": 100,
             "template_diff_thresh": 0.3,
-            "bin_ms" : 1,
-            "window_ms": 250
+            "bin_ms": 1,
+            "window_ms": 250,
         },
     }
 
@@ -43,6 +42,7 @@ class CircusMerging(BaseMergingEngine):
         self.params.update(**kwargs)
         self.sorting = sorting
         self.recording = recording
+        self.remove_empty = self.params.get('remove_empty', True)
         self.verbose = self.params.pop("verbose")
         self.templates = self.params.pop("templates", None)
         if self.templates is not None:
@@ -58,8 +58,11 @@ class CircusMerging(BaseMergingEngine):
             self.analyzer.compute(["random_spikes", "templates"])
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
 
-        self.analyzer.compute("template_similarity", 
-                              **self.params['similarity_kwargs'])
+        if self.remove_empty:
+            from .tools import remove_empty_units
+            self.analyzer = remove_empty_units(self.analyzer)
+
+        self.analyzer.compute("template_similarity", **self.params["similarity_kwargs"])
 
     def run(self, extra_outputs=False):
         curation_kwargs = self.params.get("curation_kwargs", None)
