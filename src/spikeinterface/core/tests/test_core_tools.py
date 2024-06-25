@@ -93,9 +93,9 @@ def test_path_utils_functions():
         assert d2["kwargs"]["recording"]["kwargs"]["non_existing_path"] == "yop/sub/path3"
 
         # same drive
-        assert check_paths_relative(d, cache_folder / "yep")
+        assert check_paths_relative(d, cache_folder / "yep", check_if_exists=True)
         # not the same drive
-        assert not check_paths_relative(d, r"d:\yep")
+        assert not check_paths_relative(d, r"d:\yep", check_if_exists=True)
 
         d = {
             "kwargs": {
@@ -103,10 +103,10 @@ def test_path_utils_functions():
             }
         }
         # UNC cannot be relative to d: drive
-        assert not check_paths_relative(d, r"d:\yep")
+        assert not check_paths_relative(d, r"d:\yep", check_if_exists=False)
 
         # UNC can be relative to the same UNC
-        assert check_paths_relative(d, r"\\host\share")
+        assert check_paths_relative(d, r"\\host\share", check_if_exists=False)
 
 
 def test_normal_pdf() -> None:
