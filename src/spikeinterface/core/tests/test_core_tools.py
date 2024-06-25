@@ -1,8 +1,6 @@
 import platform
 import math
-from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-import importlib
 import pytest
 import numpy as np
 
@@ -13,9 +11,6 @@ from spikeinterface.core.core_tools import (
     check_paths_relative,
     normal_pdf,
 )
-from spikeinterface.core.binaryrecordingextractor import BinaryRecordingExtractor
-from spikeinterface.core.generate import NoiseGeneratorRecording
-from spikeinterface.core.numpyextractors import NumpySorting
 
 
 if hasattr(pytest, "global_test_folder"):
@@ -26,54 +21,79 @@ else:
 
 def test_path_utils_functions():
     if platform.system() != "Windows":
+        # make the paths on the system
+        test_path1 = cache_folder / "yep/sub/path1"
+        test_path2 = cache_folder / "yep/sub/path2"
+        test_path_non_existing = "/yup/sub/path3"
+        test_path1.parent.mkdir(parents=True, exist_ok=True)
+        test_path2.parent.mkdir(parents=True, exist_ok=True)
+        test_path1.touch()
+        test_path2.touch()
         # posix path
         d = {
             "kwargs": {
-                "path": "/yep/sub/path1",
+                "path": test_path1,
                 "recording": {
                     "module": "mock_module",
                     "class": "mock_class",
                     "version": "1.2",
                     "annotations": {},
-                    "kwargs": {"path": "/yep/sub/path2"},
+                    "kwargs": {"path": test_path2, "non_existing_path": test_path_non_existing},
                 },
             }
         }
+        d2 = recursive_path_modifier(d, lambda p: str(p).replace("/yep", "/yop"))
+        assert "/yop" in d2["kwargs"]["path"]
+        assert "/yop" in d2["kwargs"]["recording"]["kwargs"]["path"]
+        assert "/yop" not in d2["kwargs"]["recording"]["kwargs"]["non_existing_path"]
 
-        d2 = recursive_path_modifier(d, lambda p: p.replace("/yep", "/yop"))
-        assert d2["kwargs"]["path"].startswith("/yop")
-        assert d2["kwargs"]["recording"]["kwargs"]["path"].startswith("/yop")
-
-        d3 = make_paths_relative(d, Path("/yep"))
+        d3 = make_paths_relative(d, cache_folder / "yep")
         assert d3["kwargs"]["path"] == "sub/path1"
         assert d3["kwargs"]["recording"]["kwargs"]["path"] == "sub/path2"
 
-        d4 = make_paths_absolute(d3, "/yop")
-        assert d4["kwargs"]["path"].startswith("/yop")
-        assert d4["kwargs"]["recording"]["kwargs"]["path"].startswith("/yop")
+        abs_path1 = cache_folder / "yop/sub/path1"
+        abs_path2 = cache_folder / "yop/sub/path2"
+        abs_path1.parent.mkdir(parents=True, exist_ok=True)
+        abs_path2.parent.mkdir(parents=True, exist_ok=True)
+        abs_path1.touch()
+        abs_path2.touch()
+        d4 = make_paths_absolute(d3, cache_folder / "yop")
+        assert "/yop" in d4["kwargs"]["path"]
+        assert "yop" in d4["kwargs"]["recording"]["kwargs"]["path"]
+        assert "yop" not in d4["kwargs"]["recording"]["kwargs"]["non_existing_path"]
 
     if platform.system() == "Windows":
         # test for windows Path
+        test_path1 = cache_folder / "yep" / "sub" / "path1"
+        test_path2 = cache_folder / "yep" / "sub" / "path2"
+        test_path_non_existing = "yop/sub/path3"
+        test_path1.parent.mkdir(parents=True, exist_ok=True)
+        test_path2.parent.mkdir(parents=True, exist_ok=True)
+        test_path1.touch()
+        test_path2.touch()
+
         d = {
             "kwargs": {
-                "path": r"c:\yep\sub\path1",
+                "path": rf"{test_path1}",
                 "recording": {
                     "module": "mock_module",
                     "class": "mock_class",
                     "version": "1.2",
                     "annotations": {},
-                    "kwargs": {"path": r"c:\yep\sub\path2"},
+                    "kwargs": {"path": rf"{test_path2}", "non_existing_path": test_path_non_existing},
                 },
             }
         }
 
-        d2 = make_paths_relative(d, "c:\\yep")
+        d2 = make_paths_relative(d, cache_folder / "yep")
         # the str be must unix like path even on windows for more portability
         assert d2["kwargs"]["path"] == "sub/path1"
         assert d2["kwargs"]["recording"]["kwargs"]["path"] == "sub/path2"
+        # the non existing path is not modified
+        assert d2["kwargs"]["recording"]["kwargs"]["non_existing_path"] == "yop/sub/path3"
 
         # same drive
-        assert check_paths_relative(d, r"c:\yep")
+        assert check_paths_relative(d, cache_folder / "yep")
         # not the same drive
         assert not check_paths_relative(d, r"d:\yep")
 
