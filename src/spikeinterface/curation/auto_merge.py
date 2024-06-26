@@ -147,6 +147,7 @@ def get_potential_auto_merge(
         "correlogram",
         "template_similarity",
         "presence_distance",
+        "knn",
         "cross_contamination",
         "check_increase_score",
     ]
@@ -180,6 +181,12 @@ def get_potential_auto_merge(
                 "cross_contamination",
                 "check_increase_score",
             ]
+        elif preset == "knn":
+            steps = ["min_spikes", 
+                     "remove_contaminated",
+                     "knn",
+                     "cross_contamination",
+                     "check_increase_score"]
 
     n = unit_ids.size
     pair_mask = np.triu(np.arange(n)) > 0
@@ -278,7 +285,6 @@ def get_potential_auto_merge(
                     template_metric=template_metric,
                     sparsity=sorting_analyzer.sparsity,
                 )
-
             pair_mask = pair_mask & (templates_diff < template_diff_thresh)
             outs["templates_diff"] = templates_diff
 
@@ -287,6 +293,27 @@ def get_potential_auto_merge(
             presence_distances = compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs)
             pair_mask = pair_mask & (presence_distances > presence_distance_thresh)
             outs["presence_distances"] = presence_distances
+
+        # STEP 6 : [optional] check how the rates overlap in times
+        elif step == "knn" in steps:
+            
+            k = 10
+            positions = sorting_analyzer.get_extension('spike_locations').get_data()
+            amplitudes = sorting_analyzer.get_extension('spike_amplitudes').get_data()
+            spikes = sorting_analyzer.sorting.to_spike_vector()
+            spike_times = spikes['sample_index']
+            data = np.vstack((amplitudes, positions['x'], positions['y'])).T
+            from sklearn.neighbors import NearestNeighbors
+            data = (data - data.mean(0))/data.std(0)
+            kdtree = NearestNeighbors(n_neighbors=k, n_jobs=-1)
+            kdtree.fit(data)
+            for unit_ind in range(n):
+                mask = spikes['unit_index'] == unit_ind
+                ind = kdtree.kneighbors(data[mask], return_distance=False)
+                ind = ind.flatten()
+                a, b = np.unique(spikes['unit_index'][ind], return_counts=True)
+                idx = np.argsort(b)[::-1][1:k+1]
+                pair_mask[unit_ind] &= np.isin(np.arange(n), idx)
 
         # STEP 7 : [optional] check if the cross contamination is significant
         elif step == "cross_contamination" in steps:
