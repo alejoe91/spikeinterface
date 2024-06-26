@@ -47,7 +47,7 @@ def spike_vector_to_spike_trains(spike_vector: list[np.array], unit_ids: np.arra
     return spike_trains
 
 
-def spike_vector_to_indices(spike_vector: list[np.array], unit_ids: np.array):
+def spike_vector_to_indices(spike_vector: list[np.array], unit_ids: np.array, absolute_index: bool = False):
     """
     Similar to spike_vector_to_spike_trains but instead having the spike_trains (aka spike times) return
     spike indices by segment and units.
@@ -61,6 +61,11 @@ def spike_vector_to_indices(spike_vector: list[np.array], unit_ids: np.array):
         List of spike vectors optained with sorting.to_spike_vector(concatenated=False)
     unit_ids: np.array
         Unit ids
+    absolute_index: bool, default False
+        It True, return absolute spike indices. If False, spike indices are relative to the segment.
+        When a unique spike vector is used,  then absolute_index should be True.
+        When a list of spikes per segment is used, then absolute_index should be False.
+
     Returns
     -------
     spike_indices: dict[dict]:
@@ -82,10 +87,16 @@ def spike_vector_to_indices(spike_vector: list[np.array], unit_ids: np.array):
 
     num_units = unit_ids.size
     spike_indices = {}
+
+    total_spikes = 0
     for segment_index, spikes in enumerate(spike_vector):
         indices = np.arange(spikes.size, dtype=np.int64)
+        if absolute_index:
+            indices += total_spikes
+            total_spikes += spikes.size
         unit_indices = np.array(spikes["unit_index"]).astype(np.int64, copy=False)
         list_of_spike_indices = vector_to_list_of_spiketrain(indices, unit_indices, num_units)
+
         spike_indices[segment_index] = dict(zip(unit_ids, list_of_spike_indices))
 
     return spike_indices
@@ -210,6 +221,7 @@ def random_spikes_selection(
 
     return random_spikes_indices
 
+
 def get_ids_after_merging(sorting, units_to_merge, new_unit_ids=None):
     merged_unit_ids = set(sorting.unit_ids)
     for count in range(len(units_to_merge)):
@@ -224,6 +236,7 @@ def get_ids_after_merging(sorting, units_to_merge, new_unit_ids=None):
                 merged_unit_ids.discard(unit_id)
             merged_unit_ids = merged_unit_ids.union([new_unit_ids[count]])
     return np.array(list(merged_unit_ids))
+
 
 def apply_merges_to_sorting(sorting, units_to_merge, new_unit_ids=None, censor_ms=None):
     """
@@ -241,7 +254,7 @@ def apply_merges_to_sorting(sorting, units_to_merge, new_unit_ids=None, censor_m
         merged units will have the first unit_id of every lists of merges
     censor_ms: None or float
         When applying the merges, should be discard consecutive spikes violating a given refractory per
-    
+
     Returns
     -------
     sorting :  The new Sorting object
