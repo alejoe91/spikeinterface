@@ -128,6 +128,7 @@ def get_potential_auto_merge(
     #    * auto correlogram is contaminated
     #    * to far away one from each other
 
+<<<<<<< Updated upstream
     if steps is None:
         steps = [
             "min_spikes",
@@ -137,6 +138,55 @@ def get_potential_auto_merge(
             "template_similarity",
             "check_increase_score",
         ]
+=======
+    all_steps = [
+        "min_spikes",
+        "remove_contaminated",
+        "unit_positions",
+        "correlogram",
+        "template_similarity",
+        "presence_distance",
+        "knn",
+        "cross_contamination",
+        "check_increase_score",
+    ]
+
+    if steps is None:
+        if preset is None:
+            steps = [
+                "min_spikes",
+                "remove_contaminated",
+                "unit_positions",
+                "correlogram",
+                "template_similarity",
+                "check_increase_score",
+            ]
+        elif preset == "temporal_splits":
+            steps = [
+                "min_spikes",
+                "remove_contaminated",
+                "unit_positions",
+                "correlogram",
+                "template_similarity",
+                "presence_distance",
+                "check_increase_score",
+            ]
+        elif preset == "lussac":
+            steps = [
+                "min_spikes",
+                "remove_contaminated",
+                "unit_positions",
+                "template_similarity",
+                "cross_contamination",
+                "check_increase_score",
+            ]
+        elif preset == "knn":
+            steps = ["min_spikes", 
+                     "remove_contaminated",
+                     "knn",
+                     "cross_contamination",
+                     "check_increase_score"]
+>>>>>>> Stashed changes
 
     n = unit_ids.size
     pair_mask = np.ones((n, n), dtype="bool")
@@ -218,6 +268,7 @@ def get_potential_auto_merge(
 
         pair_mask = pair_mask & (templates_diff < template_diff_thresh)
 
+<<<<<<< Updated upstream
     # STEP 6 : validate the potential merges with CC increase the contamination quality metrics
     if "check_increase_score" in steps:
         pair_mask, pairs_decreased_score = check_improve_contaminations_score(
@@ -228,6 +279,56 @@ def get_potential_auto_merge(
             refractory_period_ms,
             censored_period_ms,
         )
+=======
+            pair_mask = pair_mask & (templates_diff < template_diff_thresh)
+            outs["templates_diff"] = templates_diff
+
+        # STEP 6 : [optional] check how the rates overlap in times
+        elif step == "presence_distance" in steps:
+            presence_distances = compute_presence_distance(sorting, pair_mask, **presence_distance_kwargs)
+            pair_mask = pair_mask & (presence_distances > presence_distance_thresh)
+            outs["presence_distances"] = presence_distances
+        
+        # STEP 6 : [optional] check how the rates overlap in times
+        elif step == "knn" in steps:
+            
+            k = 10
+            positions = sorting_analyzer.get_extension('spike_locations').get_data()
+            amplitudes = sorting_analyzer.get_extension('spike_amplitudes').get_data()
+            spikes = sorting_analyzer.sorting.to_spike_vector()
+            spike_times = spikes['sample_index']
+            data = np.vstack((amplitudes, positions['x'], positions['y'])).T
+            from sklearn.neighbors import NearestNeighbors
+            data = (data - data.mean(0))/data.std(0)
+            kdtree = NearestNeighbors(n_neighbors=k, n_jobs=-1)
+            kdtree.fit(data)
+            for unit_ind in range(n):
+                mask = spikes['unit_index'] == unit_ind
+                ind = kdtree.kneighbors(data[mask], return_distance=False)
+                ind = ind.flatten()
+                a, b = np.unique(spikes['unit_index'][ind], return_counts=True)
+                idx = np.argsort(b)[::-1][1:k+1]
+                pair_mask[unit_ind] &= np.isin(np.arange(n), idx)
+
+        # STEP 7 : [optional] check if the cross contamination is significant
+        elif step == "cross_contamination" in steps:
+            refractory = (censored_period_ms, refractory_period_ms)
+            CC, p_values = compute_cross_contaminations(sorting_analyzer, pair_mask, CC_threshold, refractory)
+            pair_mask = pair_mask & (p_values > p_value)
+            outs["cross_contaminations"] = CC, p_values
+
+        # STEP 8 : validate the potential merges with CC increase the contamination quality metrics
+        elif step == "check_increase_score" in steps:
+            pair_mask, pairs_decreased_score = check_improve_contaminations_score(
+                sorting_analyzer,
+                pair_mask,
+                contaminations,
+                firing_contamination_balance,
+                refractory_period_ms,
+                censored_period_ms,
+            )
+            outs["pairs_decreased_score"] = pairs_decreased_score
+>>>>>>> Stashed changes
 
     # FINAL STEP : create the final list from pair_mask boolean matrix
     ind1, ind2 = np.nonzero(pair_mask)
