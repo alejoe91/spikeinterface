@@ -307,13 +307,17 @@ def get_potential_auto_merge(
             data = (data - data.mean(0))/data.std(0)
             kdtree = NearestNeighbors(n_neighbors=k, n_jobs=-1)
             kdtree.fit(data)
+            all_counts = sorting_analyzer.sorting.count_num_spikes_per_unit()
+            all_counts = np.array(list(all_counts.values()))
             for unit_ind in range(n):
                 mask = spikes['unit_index'] == unit_ind
                 ind = kdtree.kneighbors(data[mask], return_distance=False)
                 ind = ind.flatten()
                 a, b = np.unique(spikes['unit_index'][ind], return_counts=True)
-                idx = np.argsort(b)[::-1][1:k+1]
-                pair_mask[unit_ind] &= np.isin(np.arange(n), idx)
+                b = b.astype(float)
+                b /= all_counts[a]
+                idx = np.argsort(b)[::-1][1:(k+1)]
+                pair_mask[unit_ind] &= np.isin(np.arange(n), a[idx])
 
         # STEP 7 : [optional] check if the cross contamination is significant
         elif step == "cross_contamination" in steps:
