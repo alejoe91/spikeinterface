@@ -54,7 +54,7 @@ class KNNMerging(BaseMergingEngine):
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
             self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
             self.analyzer.extensions["templates"].data["average"] = templates_array
-            self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+            self.analyzer.compute("unit_locations", method="grid_convolution")
             self.analyzer.compute("spike_locations", "grid_convolution")
             self.analyzer.compute("spike_amplitudes")
         else:

@@ -241,7 +241,7 @@ class LussacMerging(BaseMergingEngine):
         "verbose": True,
         "censor_ms": 3,
         "remove_emtpy": True,
-        "recursive": False,
+        "recursive": True,
         "similarity_kwargs": {"method": "l2", "support": "union", "max_lag_ms": 0.2},
         "lussac_kwargs": {
             "minimum_spikes": 50,
@@ -268,11 +268,11 @@ class LussacMerging(BaseMergingEngine):
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
             self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
             self.analyzer.extensions["templates"].data["average"] = templates_array
-            self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+            self.analyzer.compute("unit_locations", method="grid_convolution")
         else:
             self.analyzer = create_sorting_analyzer(sorting, recording, format="memory")
             self.analyzer.compute(["random_spikes", "templates"])
-            self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+            self.analyzer.compute("unit_locations", method="grid_convolution")
 
         if self.remove_empty:
             from spikeinterface.curation.curation_tools import remove_empty_units
