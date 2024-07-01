@@ -27,10 +27,11 @@ class KNNMerging(BaseMergingEngine):
         "verbose": True,
         "censor_ms": 3,
         "remove_emtpy": True,
-        "recursive": False,   
+        "recursive": True,   
         "knn_kwargs" : {"minimum_spikes": 50,
-                        "maximum_distance_um": 100,
-                        "refractory_period": (0.3, 1.0)}
+                        "maximum_distance_um": 50,
+                        "refractory_period": (0.3, 1.0),
+                        "corr_diff_thresh": 0.5}
     }
 
     def __init__(self, recording, sorting, kwargs):
