@@ -207,7 +207,6 @@ def correct_motion(
     folder=None,
     overwrite=False,
     output_motion_info=False,
-    overwrite=False,
     detect_kwargs={},
     select_kwargs={},
     localize_peaks_kwargs={},
