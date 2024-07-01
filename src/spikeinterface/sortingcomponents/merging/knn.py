@@ -30,7 +30,7 @@ class KNNMerging(BaseMergingEngine):
         "recursive": True,
         "knn_kwargs": {
             "minimum_spikes": 50,
-            "maximum_distance_um": 100,
+            "maximum_distance_um": 50,
             "refractory_period": (0.3, 1.0),
             "corr_diff_thresh": 0.2,
             "k_nn" : 10
@@ -54,10 +54,7 @@ class KNNMerging(BaseMergingEngine):
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
             self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
             self.analyzer.extensions["templates"].data["average"] = templates_array
-<<<<<<< HEAD
-=======
             self.analyzer.compute("unit_locations", method="monopolar_triangulation")
->>>>>>> meta_merging_sc2
             self.analyzer.compute("spike_locations", "grid_convolution")
             self.analyzer.compute("spike_amplitudes")
         else:
@@ -71,10 +68,6 @@ class KNNMerging(BaseMergingEngine):
 
             self.analyzer = remove_empty_units(self.analyzer)
 
-<<<<<<< HEAD
-
-=======
->>>>>>> meta_merging_sc2
     def _get_new_sorting(self):
         knn_kwargs = self.params.get("knn_kwargs", None)
         merges = get_potential_auto_merge(self.analyzer, **knn_kwargs, preset="knn")
@@ -82,32 +75,24 @@ class KNNMerging(BaseMergingEngine):
         if self.verbose:
             print(f"{len(merges)} merges have been detected")
         units_to_merge = resolve_merging_graph(self.analyzer.sorting, merges)
-        new_sorting, _ = apply_merges_to_sorting(
-            self.analyzer.sorting, units_to_merge, censor_ms=self.params["censor_ms"]
+        new_analyzer, _ = self.analyzer.merge_units(
+            units_to_merge, mode='soft', sparsity_overlap=0.5, censor_ms=self.params["censor_ms"]
         )
-        return new_sorting, merges
+        return new_analyzer, merges
 
     def run(self, extra_outputs=False):
 
-        sorting, merges = self._get_new_sorting()
+        self.analyzer, merges = self._get_new_sorting()
         num_merges = len(merges)
         all_merges = [merges]
 
         if self.recursive:
             while num_merges > 0:
-                self.analyzer = create_sorting_analyzer(sorting, self.recording, format="memory")
-                self.analyzer.compute(["random_spikes", "templates"])
-                self.analyzer.compute("spike_locations", "grid_convolution")
-                self.analyzer.compute("spike_amplitudes")
-<<<<<<< HEAD
-=======
-                self.analyzer.compute("unit_locations", method="monopolar_triangulation")
->>>>>>> meta_merging_sc2
-                sorting, merges = self._get_new_sorting()
+                self.analyzer, merges = self._get_new_sorting()
                 num_merges = len(merges)
                 all_merges += [merges]
 
         if extra_outputs:
-            return sorting, all_merges
+            return self.analyzer.sorting, all_merges
         else:
-            return sorting
+            return self.analyzer.sorting

@@ -288,28 +288,24 @@ class LussacMerging(BaseMergingEngine):
         if self.verbose:
             print(f"{len(merges)} merges have been detected")
         units_to_merge = resolve_merging_graph(self.analyzer.sorting, merges)
-        new_sorting, _ = apply_merges_to_sorting(
-            self.analyzer.sorting, units_to_merge, censor_ms=self.params["censor_ms"]
+        new_analyzer, _ = self.analyzer.merge_units(
+            units_to_merge, mode='soft', sparsity_overlap=0.5, censor_ms=self.params["censor_ms"]
         )
-        return new_sorting, merges
+        return new_analyzer, merges
 
     def run(self, extra_outputs=False):
 
-        sorting, merges = self._get_new_sorting()
+        self.analyzer, merges = self._get_new_sorting()
         num_merges = len(merges)
         all_merges = [merges]
 
         if self.recursive:
             while num_merges > 0:
-                self.analyzer = create_sorting_analyzer(sorting, self.recording, format="memory")
-                self.analyzer.compute(["random_spikes", "templates"])
-                self.analyzer.compute("unit_locations", method="monopolar_triangulation")
-                self.analyzer.compute("template_similarity", **self.params["similarity_kwargs"])
-                sorting, merges = self._get_new_sorting()
+                self.analyzer, merges = self._get_new_sorting()
                 num_merges = len(merges)
                 all_merges += [merges]
 
         if extra_outputs:
-            return sorting, all_merges
+            return self.analyzer.sorting, all_merges
         else:
-            return sorting
+            return self.analyzer.sorting

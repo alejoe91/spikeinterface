@@ -37,11 +37,7 @@ def get_potential_auto_merge(
     template_metric="l1",
     p_value=0.2,
     CC_threshold=0.1,
-<<<<<<< HEAD
-    k_nn=5,
-=======
     k_nn=10,
->>>>>>> meta_merging_sc2
     **presence_distance_kwargs,
 ):
     """
