@@ -75,7 +75,7 @@ class KNNMerging(BaseMergingEngine):
         if self.verbose:
             print(f"{len(merges)} merges have been detected")
         units_to_merge = resolve_merging_graph(self.analyzer.sorting, merges)
-        new_analyzer, _ = self.analyzer.merge_units(
+        new_analyzer = self.analyzer.merge_units(
             units_to_merge, mode='soft', sparsity_overlap=0.5, censor_ms=self.params["censor_ms"]
         )
         return new_analyzer, merges
