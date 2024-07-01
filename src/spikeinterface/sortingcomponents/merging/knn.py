@@ -27,11 +27,14 @@ class KNNMerging(BaseMergingEngine):
         "verbose": True,
         "censor_ms": 3,
         "remove_emtpy": True,
-        "recursive": True,   
-        "knn_kwargs" : {"minimum_spikes": 50,
-                        "maximum_distance_um": 50,
-                        "refractory_period": (0.3, 1.0),
-                        "corr_diff_thresh": 0.5}
+        "recursive": True,
+        "knn_kwargs": {
+            "minimum_spikes": 50,
+            "maximum_distance_um": 100,
+            "refractory_period": (0.3, 1.0),
+            "corr_diff_thresh": 0.25,
+            "k_nn" : 10
+        },
     }
 
     def __init__(self, recording, sorting, kwargs):
@@ -51,6 +54,10 @@ class KNNMerging(BaseMergingEngine):
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
             self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
             self.analyzer.extensions["templates"].data["average"] = templates_array
+<<<<<<< HEAD
+=======
+            self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+>>>>>>> meta_merging_sc2
             self.analyzer.compute("spike_locations", "grid_convolution")
             self.analyzer.compute("spike_amplitudes")
         else:
@@ -64,7 +71,10 @@ class KNNMerging(BaseMergingEngine):
 
             self.analyzer = remove_empty_units(self.analyzer)
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> meta_merging_sc2
     def _get_new_sorting(self):
         knn_kwargs = self.params.get("knn_kwargs", None)
         merges = get_potential_auto_merge(self.analyzer, **knn_kwargs, preset="knn")
@@ -89,6 +99,10 @@ class KNNMerging(BaseMergingEngine):
                 self.analyzer.compute(["random_spikes", "templates"])
                 self.analyzer.compute("spike_locations", "grid_convolution")
                 self.analyzer.compute("spike_amplitudes")
+<<<<<<< HEAD
+=======
+                self.analyzer.compute("unit_locations", method="monopolar_triangulation")
+>>>>>>> meta_merging_sc2
                 sorting, merges = self._get_new_sorting()
                 num_merges = len(merges)
                 all_merges += [merges]
