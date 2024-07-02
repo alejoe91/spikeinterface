@@ -26,13 +26,13 @@ class KNNMerging(BaseMergingEngine):
         "templates": None,
         "verbose": True,
         "censor_ms": 3,
-        "remove_emtpy": True,
+        "remove_emtpy": False,
         "recursive": True,
         "knn_kwargs": {
             "minimum_spikes": 50,
             "maximum_distance_um": 50,
             "refractory_period": (0.3, 1.0),
-            "corr_diff_thresh": 0.2,
+            "corr_diff_thresh": 0.25,
             "k_nn" : 10
         },
     }
@@ -52,9 +52,10 @@ class KNNMerging(BaseMergingEngine):
             templates_array = self.templates.get_dense_templates().copy()
             self.analyzer = create_sorting_analyzer(sorting, recording, format="memory", sparsity=sparsity)
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
-            self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
+            self.analyzer.extensions["templates"].params = {"ms_before": self.templates.ms_before,
+                                                            "ms_after": self.templates.ms_after}
             self.analyzer.extensions["templates"].data["average"] = templates_array
-            self.analyzer.compute("unit_locations", method="grid_convolution")
+            self.analyzer.compute("unit_locations", method="center_of_mass")
             self.analyzer.compute("spike_locations", "grid_convolution")
             self.analyzer.compute("spike_amplitudes")
         else:
@@ -76,7 +77,7 @@ class KNNMerging(BaseMergingEngine):
             print(f"{len(merges)} merges have been detected")
         units_to_merge = resolve_merging_graph(self.analyzer.sorting, merges)
         new_analyzer = self.analyzer.merge_units(
-            units_to_merge, mode='soft', sparsity_overlap=0.5, censor_ms=self.params["censor_ms"]
+            units_to_merge, mode='soft', sparsity_overlap=-1, censor_ms=self.params["censor_ms"]
         )
         return new_analyzer, merges
 

@@ -392,9 +392,9 @@ def get_pairs_via_nntree(sorting_analyzer, k_nn=5, pair_mask=None):
             ind = ind[mask_2]
             chan_inds, all_counts = np.unique(spikes["unit_index"][ind], return_counts=True)
             all_counts = all_counts.astype(float)
-            all_counts /= all_spike_counts[chan_inds]
+            #all_counts /= all_spike_counts[chan_inds]
             best_indices = np.argsort(all_counts)[::-1]
-            pair_mask[unit_ind] &= np.isin(np.arange(n), chan_inds[best_indices])
+            pair_mask[unit_ind, unit_ind + 1 :] &= np.isin(np.arange(unit_ind + 1, n), chan_inds[best_indices])
     return pair_mask
 
 

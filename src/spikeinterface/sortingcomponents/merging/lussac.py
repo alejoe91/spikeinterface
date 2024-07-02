@@ -266,7 +266,8 @@ class LussacMerging(BaseMergingEngine):
             templates_array = self.templates.get_dense_templates().copy()
             self.analyzer = create_sorting_analyzer(sorting, recording, format="memory", sparsity=sparsity)
             self.analyzer.extensions["templates"] = ComputeTemplates(self.analyzer)
-            self.analyzer.extensions["templates"].params = {"nbefore": self.templates.nbefore}
+            self.analyzer.extensions["templates"].params = {"ms_before": self.templates.ms_before,
+                                                            "ms_after": self.templates.ms_after}
             self.analyzer.extensions["templates"].data["average"] = templates_array
             self.analyzer.compute("unit_locations", method="grid_convolution")
         else:
@@ -289,7 +290,7 @@ class LussacMerging(BaseMergingEngine):
             print(f"{len(merges)} merges have been detected")
         units_to_merge = resolve_merging_graph(self.analyzer.sorting, merges)
         new_analyzer = self.analyzer.merge_units(
-            units_to_merge, mode='soft', sparsity_overlap=0.5, censor_ms=self.params["censor_ms"]
+            units_to_merge, mode='soft', sparsity_overlap=0.25, censor_ms=self.params["censor_ms"]
         )
         return new_analyzer, merges
 
