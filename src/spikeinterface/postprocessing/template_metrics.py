@@ -136,13 +136,16 @@ class TemplateMetricsCalculator(BaseWaveformExtractorExtension):
 
                 for metric_name in metrics_single_channel:
                     func = _metric_name_to_func[metric_name]
-                    value = func(
-                        template_upsampled,
-                        sampling_frequency=sampling_frequency_up,
-                        trough_idx=trough_idx,
-                        peak_idx=peak_idx,
-                        **self._params["metrics_kwargs"],
-                    )
+                    try:
+                        value = func(
+                            template_upsampled,
+                            sampling_frequency=sampling_frequency_up,
+                            trough_idx=trough_idx,
+                            peak_idx=peak_idx,
+                            **self._params["metrics_kwargs"],
+                        )
+                    except:
+                        value = np.nan
                     template_metrics.at[index, metric_name] = value
 
             # compute metrics multi_channel
