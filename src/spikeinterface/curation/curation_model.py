@@ -3,6 +3,8 @@ from typing import List, Dict, Union, Optional, Literal, Tuple
 from itertools import chain, combinations
 import numpy as np
 
+from spikeinterface import BaseSorting
+
 
 class LabelDefinition(BaseModel):
     name: str = Field(..., description="Name of the label")
@@ -37,6 +39,35 @@ class Split(BaseModel):
         default=None, description="List of new unit IDs for each split"
     )
 
+    def get_full_spike_indices(self, sorting: BaseSorting):
+        """
+        Get the full indices of the spikes in the split for different split modes.
+        """
+        num_spikes = sorting.count_num_spikes_per_unit()[self.unit_id]
+        if self.split_mode == "indices":
+            # check the sum of split_indices is equal to num_spikes
+            num_spikes_in_split = sum(len(indices) for indices in self.split_indices)
+            if num_spikes_in_split != num_spikes:
+                # add remaining spike indices
+                full_spike_indices = list(self.split_indices)
+                existing_indices = np.concatenate(self.split_indices)
+                remaining_indices = np.setdiff1d(np.arange(num_spikes), existing_indices)
+                full_spike_indices.append(remaining_indices)
+            else:
+                full_spike_indices = self.split_indices
+        elif self.split_mode == "labels":
+            assert len(self.split_labels) == num_spikes, (
+                f"In 'labels' mode, the number of split_labels ({len(self.split_labels)}) "
+                f"must match the number of spikes in the unit ({num_spikes})"
+            )
+            # convert to spike indices
+            full_spike_indices = []
+            for label in np.unique(self.split_labels):
+                label_indices = np.where(self.split_labels == label)[0]
+                full_spike_indices.append(label_indices)
+
+        return full_spike_indices
+
 
 class CurationModel(BaseModel):
     supported_versions: Tuple[Literal["1"], Literal["2"]] = Field(
@@ -67,7 +98,6 @@ class CurationModel(BaseModel):
 
     @classmethod
     def check_manual_labels(cls, values):
-
         unit_ids = list(values["unit_ids"])
         manual_labels = values.get("manual_labels")
         if manual_labels is None:
@@ -99,7 +129,6 @@ class CurationModel(BaseModel):
 
     @classmethod
     def check_merges(cls, values):
-
         unit_ids = list(values["unit_ids"])
         merges = values.get("merges")
         if merges is None:
@@ -147,7 +176,6 @@ class CurationModel(BaseModel):
 
     @classmethod
     def check_splits(cls, values):
-
         unit_ids = list(values["unit_ids"])
         splits = values.get("splits")
         if splits is None:
