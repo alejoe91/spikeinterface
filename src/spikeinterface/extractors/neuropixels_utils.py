@@ -27,14 +27,16 @@ def get_neuropixels_sample_shifts_from_probe(probe: Probe, stream_name: str = "a
     # get inter-sample shifts based on the probe information and mux channels
     model_description = probe.annotations.get("description", None)
     num_channels_per_adc = probe.annotations.get("num_channels_per_adc", None)
-    mux_channels = probe.contact_annotations.get("mux_channels", None)
+    mux_index = probe.contact_annotations.get("mux_index", None)
     num_readouts_channels = probe.annotations.get("num_readout_channels", None)
+    # deprecated
+    mux_channels = probe.contact_annotations.get("mux_channels", None)
 
     if (
         model_description is None
         or num_channels_per_adc is None
-        or mux_channels is None
         or num_readouts_channels is None
+        or (mux_index is None and mux_channels is None)
     ):
         warning_message = (
             "Unable to find inter-sample shifts in the Neuropixels probe metadata. "
@@ -52,8 +54,21 @@ def get_neuropixels_sample_shifts_from_probe(probe: Probe, stream_name: str = "a
         num_cycles_in_adc = num_channels_per_adc + 1 if "ap" in stream_name.lower() else num_channels_per_adc
 
     sample_shifts = np.zeros_like(mux_channels, dtype=float)
-    for mux_channel in mux_channels:
-        sample_shifts[mux_channels == mux_channel] = np.arange(num_channels_per_adc) / num_cycles_in_adc
+    if mux_index is not None:
+        # mux index is the index in the ADC cycle
+        for i, mux_idx in enumerate(mux_index):
+            sample_shifts[i] = mux_idx / num_cycles_in_adc
+    else:
+        # if no mux index, we assume the channels are ordered by ADCs
+        if probe.get_contact_count() != num_readouts_channels:
+            warning_message = (
+                "The number of channels in the probe does not match the number of readout channels. "
+                "The sample shifts will not be loaded. "
+            )
+            warnings.warn(warning_message, UserWarning, stacklevel=2)
+            return None
+        for mux_channel in np.unique(mux_channels):
+            sample_shifts[mux_channels == mux_channel] = np.arange(num_channels_per_adc) / num_cycles_in_adc
 
     return sample_shifts
 
