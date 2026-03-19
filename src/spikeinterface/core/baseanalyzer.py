@@ -1,9 +1,12 @@
 """
-BaseAnalyzerExtension: domain-agnostic base class for analyzer extensions.
+Base classes for domain-agnostic analyzers and their extensions.
 
-Provides persistence (binary_folder / zarr), parameter management,
-dependency tracking, and run lifecycle shared by SpikeInterface's
-AnalyzerExtension and downstream projects (e.g. photon-mosaic).
+* ``BaseAnalyzerExtension`` — persistence (binary_folder / zarr), parameter
+  management, dependency tracking, and run lifecycle.
+* ``BaseAnalyzer`` — extension management (compute / load / delete),
+  with a generic *input_extractor* / *output_extractor* pattern so
+  SpikeInterface (recording / sorting) and photon-mosaic (imaging / rois)
+  share the same code.
 
 Domain-specific subclasses add their own properties
 (e.g. sorting_analyzer, sparsity, merge/split) on top.
@@ -21,7 +24,7 @@ from time import perf_counter
 
 import numpy as np
 
-from .core_tools import check_json, retrieve_importing_provenance
+from .core_tools import check_json, is_path_remote, retrieve_importing_provenance
 from .zarrextractors import get_default_zarr_compressor
 
 
@@ -51,6 +54,7 @@ class BaseAnalyzerExtension:
     nodepipeline_variables = None
     need_job_kwargs = False
     need_backward_compatibility_on_load = False
+    need_input = False
 
     def __init__(self, analyzer):
         self._analyzer_ref = weakref.ref(analyzer)
@@ -516,3 +520,449 @@ class BaseAnalyzerExtension:
 
     def set_data(self, ext_data_name, ext_data):
         self.data[ext_data_name] = ext_data
+
+
+# ---------------------------------------------------------------------------
+# Shared utility functions (parameterised — no module-level global state)
+# ---------------------------------------------------------------------------
+
+
+def sort_extensions_by_dependency(extensions, get_extension_class_fn):
+    """Sort *extensions* dict so parents come before children.
+
+    Parameters
+    ----------
+    extensions : dict
+        Mapping of extension_name → params.
+    get_extension_class_fn : callable
+        ``get_extension_class(name)`` for the project.
+
+    Returns
+    -------
+    dict
+        Re-ordered copy of *extensions*.
+    """
+    ext_list = list(extensions.keys())
+    params_list = list(extensions.values())
+
+    i = 0
+    while i < len(ext_list):
+        name = ext_list[i]
+        params = params_list[i]
+
+        ext_class = get_extension_class_fn(name)
+        required = ext_class.get_required_dependencies(**params)
+        optional = ext_class.get_optional_dependencies(**params)
+        all_deps = list(chain.from_iterable(d.split("|") for d in required + optional))
+
+        did_nothing = True
+        for dep in all_deps:
+            if dep in ext_list[i:]:
+                dep_idx = ext_list.index(dep)
+                params_list.insert(i, params_list.pop(dep_idx))
+                ext_list.insert(i, ext_list.pop(dep_idx))
+                did_nothing = False
+
+        if did_nothing:
+            i += 1
+
+    return dict(zip(ext_list, params_list))
+
+
+def get_children_dependencies(extension_name, extension_children):
+    """Recursively collect all children that depend on *extension_name*.
+
+    Parameters
+    ----------
+    extension_name : str
+    extension_children : dict
+        Mapping ``parent_name → [child_name, …]``.
+
+    Returns
+    -------
+    list[str]
+    """
+    names = []
+    children = extension_children.get(extension_name, [])
+    for child in children:
+        if child not in names:
+            names.append(child)
+        names.extend(get_children_dependencies(child, extension_children))
+    return names
+
+
+# ---------------------------------------------------------------------------
+# BaseAnalyzer
+# ---------------------------------------------------------------------------
+
+
+class BaseAnalyzer:
+    """Domain-agnostic base for analyzer objects.
+
+    Captures the extension management lifecycle shared by
+    ``SortingAnalyzer`` (recording / sorting) and ``RoiAnalyzer``
+    (imaging / rois).  Storage backends (create_memory, create_zarr, …)
+    remain in the subclasses.
+
+    Subclasses **must** set the class attributes ``_input_name`` and
+    ``_output_name`` and override every method listed under
+    *Registry hooks*.
+    """
+
+    # -- Class-level names (override in subclass) --------------------------
+    _input_name: str = "input"  # e.g. "recording" / "imaging"
+    _output_name: str = "output"  # e.g. "sorting" / "rois"
+
+    # -- Init --------------------------------------------------------------
+
+    def _init_base(
+        self,
+        output_extractor,
+        input_extractor=None,
+        input_attributes=None,
+        format=None,
+        backend_options=None,
+    ):
+        """Initialise the generic parts shared by every analyzer.
+
+        Call this from the subclass ``__init__``.
+        """
+        self._output_extractor = output_extractor
+        self._input_extractor = input_extractor
+        self._input_attributes = input_attributes
+        self.format = format
+        self.folder = None
+        self._temporary_input = None
+        self._backend_options = {} if backend_options is None else backend_options
+        self.extensions = dict()
+
+    # -- Input / output accessors ------------------------------------------
+
+    def has_input(self) -> bool:
+        """Whether the primary input extractor is available."""
+        return self._input_extractor is not None
+
+    def has_temporary_input(self) -> bool:
+        """Whether a temporary input extractor has been set."""
+        return self._temporary_input is not None
+
+    @property
+    def input_extractor(self):
+        """Resolve the input extractor (temporary takes precedence)."""
+        if not self.has_input() and not self.has_temporary_input():
+            raise ValueError(f"{self.__class__.__name__} could not load the {self._input_name}")
+        return self._temporary_input or self._input_extractor
+
+    # -- Shared read-only / zarr helpers -----------------------------------
+
+    def is_read_only(self) -> bool:
+        import os
+
+        if self.format == "memory":
+            return False
+        if self.format == "binary_folder":
+            return not os.access(self.folder, os.W_OK)
+        # zarr or other
+        if not is_path_remote(str(self.folder)):
+            return not os.access(self.folder, os.W_OK)
+        return False
+
+    def _get_zarr_root(self, mode="r+"):
+        from .zarrextractors import super_zarr_open
+
+        storage_options = self._backend_options.get("storage_options", {})
+        return super_zarr_open(str(self.folder), mode=mode, storage_options=storage_options)
+
+    # ======================================================================
+    # Registry hooks — subclasses MUST override
+    # ======================================================================
+
+    def _get_extension_class(self, extension_name):
+        """Return the extension class for *extension_name* (with auto-import)."""
+        raise NotImplementedError
+
+    def _get_children_dependencies(self, extension_name):
+        """Return list of transitive child extension names."""
+        raise NotImplementedError
+
+    def _sort_extensions_by_dependency(self, extensions):
+        """Return *extensions* dict sorted so parents precede children."""
+        raise NotImplementedError
+
+    def _get_available_extensions(self):
+        """Return list of all built-in extension names."""
+        raise NotImplementedError
+
+    def _get_default_extension_params(self, extension_name):
+        """Return default params dict for *extension_name*."""
+        raise NotImplementedError
+
+    def _get_extra_pipeline_kwargs(self):
+        """Extra keyword arguments passed to ``run_node_pipeline``.
+
+        Override in subclasses that need project-specific flags
+        (e.g. ``check_for_peak_source=False``).
+        """
+        return {}
+
+    # ======================================================================
+    # Extension management — fully generic
+    # ======================================================================
+
+    def compute(self, input, save=True, extension_params=None, verbose=False, **kwargs):
+        """Compute one or several extensions.
+
+        Parameters
+        ----------
+        input : str | dict | list
+            Extension name (str), dict of {name: params}, or list of names.
+        save : bool, default: True
+            Whether to persist computed extensions.
+        extension_params : dict | None
+            Per-extension params when *input* is a list.
+        verbose : bool
+            Print progress.
+        **kwargs
+            Passed to the extension's ``set_params`` (if str) or as job_kwargs.
+
+        Returns
+        -------
+        BaseAnalyzerExtension | None
+            The extension instance when *input* is a string, ``None`` otherwise.
+        """
+        from .job_tools import split_job_kwargs
+
+        if isinstance(input, str):
+            return self.compute_one_extension(extension_name=input, save=save, verbose=verbose, **kwargs)
+        elif isinstance(input, dict):
+            params_, job_kwargs = split_job_kwargs(kwargs)
+            assert len(params_) == 0, f"Unexpected arguments: {set(params_)}"
+            self.compute_several_extensions(extensions=input, save=save, verbose=verbose, **job_kwargs)
+        elif isinstance(input, list):
+            params_, job_kwargs = split_job_kwargs(kwargs)
+            assert len(params_) == 0, f"Unexpected arguments: {set(params_)}"
+            extensions = {k: {} for k in input}
+            if extension_params is not None:
+                for name, params in extension_params.items():
+                    assert name in input, f"Extension '{name}' not in input list"
+                    extensions[name] = params
+            self.compute_several_extensions(extensions=extensions, save=save, verbose=verbose, **job_kwargs)
+        else:
+            raise ValueError("compute() expects a str, dict, or list")
+        return None
+
+    def compute_one_extension(self, extension_name, save=True, verbose=False, **kwargs):
+        """Compute a single extension.
+
+        Automatically deletes dependent extensions to keep data coherent.
+        """
+        from .job_tools import split_job_kwargs
+
+        extension_class = self._get_extension_class(extension_name)
+
+        for child in self._get_children_dependencies(extension_name):
+            if self.has_extension(child):
+                if verbose:
+                    print(f"Deleting extension: {child}")
+                self.delete_extension(child)
+
+        params, job_kwargs = split_job_kwargs(kwargs)
+
+        # Check input-data requirement
+        if extension_class.need_input:
+            assert (
+                self.has_input() or self.has_temporary_input()
+            ), f"Extension '{extension_name}' requires the {self._input_name}"
+
+        # Check extension dependencies
+        for dep in extension_class.get_required_dependencies(**params):
+            if "|" in dep:
+                ok = any(self.get_extension(d) is not None for d in dep.split("|"))
+            else:
+                ok = self.get_extension(dep) is not None
+            assert ok, f"Extension '{extension_name}' requires '{dep}' to be computed first"
+
+        extension_instance = extension_class(self)
+        extension_instance.set_params(save=save, **params)
+        if extension_class.need_job_kwargs:
+            extension_instance.run(save=save, verbose=verbose, **job_kwargs)
+        else:
+            extension_instance.run(save=save, verbose=verbose)
+
+        self.extensions[extension_name] = extension_instance
+        return extension_instance
+
+    def compute_several_extensions(self, extensions, save=True, verbose=False, **job_kwargs):
+        """Compute several extensions respecting dependency order."""
+        from .node_pipeline import run_node_pipeline
+
+        # Validate dependencies
+        ext_names = list(extensions.keys())
+        for name, params in extensions.items():
+            for dep in self._get_extension_class(name).get_required_dependencies(**params):
+                if "|" in dep:
+                    ok = any(self.has_extension(d) or d in ext_names for d in dep.split("|"))
+                else:
+                    ok = self.has_extension(dep) or dep in ext_names
+                assert ok, f"Extension '{name}' requires '{dep}' to be computed first"
+
+        sorted_exts = self._sort_extensions_by_dependency(extensions)
+
+        # Delete children of extensions we're about to recompute
+        for name in sorted_exts:
+            for child in self._get_children_dependencies(name):
+                if verbose:
+                    print(f"Deleting extension: {child}")
+                self.delete_extension(child)
+
+        # Group: pipeline vs non-pipeline
+        pipeline_exts = {}
+        pre_pipeline_exts = {}
+        post_pipeline_exts = {}
+        for name, params in sorted_exts.items():
+            ext_class = self._get_extension_class(name)
+            if ext_class.use_nodepipeline:
+                pipeline_exts[name] = params
+            elif any(
+                self._get_extension_class(d).use_nodepipeline
+                for d in ext_class.get_any_dependencies(**params)
+                if d in sorted_exts
+            ):
+                post_pipeline_exts[name] = params
+            else:
+                pre_pipeline_exts[name] = params
+
+        # Pre-pipeline
+        for name, params in pre_pipeline_exts.items():
+            ext_class = self._get_extension_class(name)
+            if ext_class.need_job_kwargs:
+                self.compute_one_extension(name, save=save, verbose=verbose, **params, **job_kwargs)
+            else:
+                self.compute_one_extension(name, save=save, verbose=verbose, **params)
+
+        # Pipeline extensions (run together)
+        if len(pipeline_exts) > 0:
+            all_nodes = []
+            result_routage = []
+            instances = {}
+
+            for name, params in pipeline_exts.items():
+                ext_class = self._get_extension_class(name)
+                assert (
+                    self.has_input() or self.has_temporary_input()
+                ), f"Extension '{name}' requires the {self._input_name}"
+
+                for var in ext_class.nodepipeline_variables:
+                    result_routage.append((name, var))
+
+                inst = ext_class(self)
+                inst.set_params(save=save, **params)
+                instances[name] = inst
+                all_nodes.extend(inst.get_pipeline_nodes())
+
+            job_name = "Compute: " + " + ".join(pipeline_exts.keys())
+            t0 = perf_counter()
+            results = run_node_pipeline(
+                self.input_extractor,
+                all_nodes,
+                job_kwargs=job_kwargs,
+                job_name=job_name,
+                gather_mode="memory",
+                squeeze_output=False,
+                verbose=verbose,
+                **self._get_extra_pipeline_kwargs(),
+            )
+            runtime_s = perf_counter() - t0
+
+            for r, result in enumerate(results):
+                ext_name, var_name = result_routage[r]
+                instances[ext_name].data[var_name] = result
+                instances[ext_name].run_info["runtime_s"] = runtime_s
+                instances[ext_name].run_info["run_completed"] = True
+
+            for name, inst in instances.items():
+                self.extensions[name] = inst
+                if save:
+                    inst.save()
+
+        # Post-pipeline
+        for name, params in post_pipeline_exts.items():
+            ext_class = self._get_extension_class(name)
+            if ext_class.need_job_kwargs:
+                self.compute_one_extension(name, save=save, verbose=verbose, **params, **job_kwargs)
+            else:
+                self.compute_one_extension(name, save=save, verbose=verbose, **params)
+
+    def get_saved_extension_names(self):
+        """Get extension names saved on disk (without loading data)."""
+        saved = []
+        if self.format == "binary_folder":
+            ext_folder = self.folder / "extensions"
+            if ext_folder.is_dir():
+                for d in ext_folder.iterdir():
+                    if d.is_dir() and (d / "params.json").is_file():
+                        saved.append(d.stem)
+        elif self.format == "zarr":
+            zarr_root = self._get_zarr_root(mode="r")
+            if "extensions" in zarr_root.keys():
+                for name in zarr_root["extensions"].keys():
+                    if "params" in zarr_root["extensions"][name].attrs.keys():
+                        saved.append(name)
+        return saved
+
+    def get_extension(self, extension_name):
+        """Get an extension, auto-loading from disk if needed.
+
+        Returns ``None`` if the extension has not been computed.
+        """
+        if extension_name in self.extensions:
+            return self.extensions[extension_name]
+        elif self.format != "memory" and self.has_extension(extension_name):
+            self.load_extension(extension_name)
+            return self.extensions[extension_name]
+        return None
+
+    def load_extension(self, extension_name):
+        """Load an extension from disk into memory."""
+        assert self.format != "memory", "load_extension() is for non-memory formats"
+
+        extension_class = self._get_extension_class(extension_name)
+        if extension_class is None:
+            return None
+
+        ext_instance = extension_class.load(self)
+        self.extensions[extension_name] = ext_instance
+        return ext_instance
+
+    def load_all_saved_extension(self):
+        """Load all saved extensions into memory."""
+        for name in self.get_saved_extension_names():
+            self.load_extension(name)
+
+    def delete_extension(self, extension_name):
+        """Delete an extension from memory and from disk."""
+        if self.format != "memory" and self.has_extension(extension_name):
+            ext = self.load_extension(extension_name)
+            if ext is not None:
+                ext.delete()
+        self.extensions.pop(extension_name, None)
+
+    def get_loaded_extension_names(self):
+        """Return names of currently loaded extensions."""
+        return list(self.extensions.keys())
+
+    def has_extension(self, extension_name):
+        """Check if an extension exists (in memory or on disk)."""
+        if extension_name in self.extensions:
+            return True
+        if self.format == "memory":
+            return False
+        return extension_name in self.get_saved_extension_names()
+
+    def get_computable_extensions(self):
+        """List all registered extension names."""
+        return self._get_available_extensions()
+
+    def get_default_extension_params(self, extension_name):
+        """Get default params for an extension."""
+        return self._get_default_extension_params(extension_name)

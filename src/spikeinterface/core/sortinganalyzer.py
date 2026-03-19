@@ -23,7 +23,7 @@ import spikeinterface
 from spikeinterface.core import BaseRecording, BaseSorting, aggregate_channels, aggregate_units
 from spikeinterface.core.waveform_tools import has_exceeding_spikes
 
-from .baseanalyzer import BaseAnalyzerExtension
+from .baseanalyzer import BaseAnalyzer, BaseAnalyzerExtension
 from .recording_tools import check_probe_do_not_overlap, get_rec_attributes, do_recording_attributes_match
 from .core_tools import (
     check_json,
@@ -249,7 +249,7 @@ def load_sorting_analyzer(folder, load_extensions=True, format="auto", backend_o
     return SortingAnalyzer.load(folder, load_extensions=load_extensions, format=format, backend_options=backend_options)
 
 
-class SortingAnalyzer:
+class SortingAnalyzer(BaseAnalyzer):
     """
     Class to make a pair of Recording-Sorting which will be used used for all post postprocessing,
     visualization and quality metric computation.
@@ -271,6 +271,9 @@ class SortingAnalyzer:
     or eventually SortingAnalyzer.create(...)
     """
 
+    _input_name = "recording"
+    _output_name = "sorting"
+
     def __init__(
         self,
         sorting: BaseSorting,
@@ -282,31 +285,73 @@ class SortingAnalyzer:
         backend_options: dict | None = None,
     ):
         # very fast init because checks are done in load and create
-        self.sorting = sorting
-        # self.recording will be a property
-        self._recording = recording
-        self.rec_attributes = rec_attributes
-        self.format = format
+        self._init_base(
+            output_extractor=sorting,
+            input_extractor=recording,
+            input_attributes=rec_attributes,
+            format=format,
+            backend_options=backend_options,
+        )
         self.sparsity = sparsity
         self.return_in_uV = return_in_uV
 
         # For backward compatibility
         self.return_scaled = return_in_uV
-        self.folder: str | Path | None = None
 
-        # this is used to store temporary recording
-        self._temporary_recording = None
+    # ------------------------------------------------------------------
+    # Property aliases (map generic base names to SI terminology)
+    # ------------------------------------------------------------------
 
-        # backend-specific kwargs for different formats, which can be used to
-        # set some parameters for saving (e.g., compression)
-        #
-        # - storage_options: dict | None (fsspec storage options)
-        # - saving_options: dict | None
-        # (additional saving options for creating and saving datasets, e.g. compression/filters for zarr)
-        self._backend_options = {} if backend_options is None else backend_options
+    @property
+    def sorting(self):
+        return self._output_extractor
 
-        # extensions are not loaded at init
-        self.extensions = dict()
+    @sorting.setter
+    def sorting(self, value):
+        self._output_extractor = value
+
+    @property
+    def rec_attributes(self):
+        return self._input_attributes
+
+    @rec_attributes.setter
+    def rec_attributes(self, value):
+        self._input_attributes = value
+
+    @property
+    def _recording(self):
+        return self._input_extractor
+
+    @_recording.setter
+    def _recording(self, value):
+        self._input_extractor = value
+
+    @property
+    def _temporary_recording(self):
+        return self._temporary_input
+
+    @_temporary_recording.setter
+    def _temporary_recording(self, value):
+        self._temporary_input = value
+
+    # ------------------------------------------------------------------
+    # Registry hooks (delegate to module-level functions)
+    # ------------------------------------------------------------------
+
+    def _get_extension_class(self, extension_name):
+        return get_extension_class(extension_name)
+
+    def _get_children_dependencies(self, extension_name):
+        return _get_children_dependencies(extension_name)
+
+    def _sort_extensions_by_dependency(self, extensions):
+        return _sort_extensions_by_dependency(extensions)
+
+    def _get_available_extensions(self):
+        return get_available_analyzer_extensions()
+
+    def _get_default_extension_params(self, extension_name):
+        return get_default_analyzer_extension_params(extension_name)
 
     def __repr__(self) -> str:
         clsname = self.__class__.__name__
@@ -607,12 +652,7 @@ class SortingAnalyzer:
 
         return sorting_analyzer
 
-    def _get_zarr_root(self, mode="r+"):
-        assert mode in ("r+", "a", "r"), "mode must be 'r+', 'a' or 'r'"
-
-        storage_options = self._backend_options.get("storage_options", {})
-        zarr_root = super_zarr_open(self.folder, mode=mode, storage_options=storage_options)
-        return zarr_root
+    # _get_zarr_root is inherited from BaseAnalyzer
 
     @classmethod
     def create_zarr(cls, folder, sorting, recording, sparsity, return_in_uV, rec_attributes, backend_options):
@@ -1444,26 +1484,13 @@ class SortingAnalyzer:
         """
         return self._save_or_select_or_merge_or_split(format="memory", folder=None)
 
-    def is_read_only(self) -> bool:
-        if self.format == "memory":
-            return False
-        elif self.format == "binary_folder":
-            return not os.access(self.folder, os.W_OK)
-        else:
-            if not is_path_remote(str(self.folder)):
-                return not os.access(self.folder, os.W_OK)
-            else:
-                # in this case we don't know if the file is read only so an error
-                # will be raised if we try to save/append
-                return False
+    # is_read_only is inherited from BaseAnalyzer
 
     ## map attribute and property zone
 
     @property
     def recording(self) -> BaseRecording:
-        if not self.has_recording() and not self.has_temporary_recording():
-            raise ValueError("SortingAnalyzer could not load the recording")
-        return self._temporary_recording or self._recording
+        return self.input_extractor
 
     @property
     def channel_ids(self) -> np.ndarray:
@@ -1478,10 +1505,10 @@ class SortingAnalyzer:
         return self.sorting.unit_ids
 
     def has_recording(self) -> bool:
-        return self._recording is not None
+        return self.has_input()
 
     def has_temporary_recording(self) -> bool:
-        return self._temporary_recording is not None
+        return self.has_temporary_input()
 
     def is_sparse(self) -> bool:
         return self.sparsity is not None
@@ -1594,416 +1621,12 @@ class SortingAnalyzer:
         return self.sorting.get_num_units()
 
     ## extensions zone
-    def compute(self, input, save=True, extension_params=None, verbose=False, **kwargs) -> "AnalyzerExtension | None":
-        """
-        Compute one extension or several extensiosn.
-        Internally calls compute_one_extension() or compute_several_extensions() depending on the input type.
-
-        Parameters
-        ----------
-        input : str or dict or list
-            The extensions to compute, which can be passed as:
-            * a string: compute one extension. Additional parameters can be passed as key word arguments.
-            * a dict: compute several extensions. The keys are the extension names and the values are dictionaries with the extension parameters.
-            * a list: compute several extensions. The list contains the extension names. Additional parameters can be passed with the extension_params
-            argument.
-        save : bool, default: True
-            If True the extension is saved to disk (only if sorting analyzer format is not "memory")
-        extension_params : dict or None, default: None
-            If input is a list, this parameter can be used to specify parameters for each extension.
-            The extension_params keys must be included in the input list.
-        **kwargs:
-            All other kwargs are transmitted to extension.set_params() (if input is a string) or job_kwargs
-
-        Returns
-        -------
-        extension : SortingAnalyzerExtension | None
-            The extension instance if input is a string, None otherwise.
-
-        Examples
-        --------
-        This function accepts the following possible signatures for flexibility:
-
-        Compute one extension, with parameters:
-        >>> analyzer.compute("waveforms", ms_before=1.5, ms_after=2.5)
-
-        Compute two extensions with a list as input and with default parameters:
-        >>> analyzer.compute(["random_spikes", "waveforms"])
-
-        Compute two extensions with dict as input, one dict per extension
-        >>> analyzer.compute({"random_spikes":{}, "waveforms":{"ms_before":1.5, "ms_after", "2.5"}})
-
-        Compute two extensions with an input list specifying custom parameters for one
-        (the other will use default parameters):
-        >>> analyzer.compute(\
-["random_spikes", "waveforms"],\
-extension_params={"waveforms":{"ms_before":1.5, "ms_after": "2.5"}}\
-)
-
-        """
-        if isinstance(input, str):
-            return self.compute_one_extension(extension_name=input, save=save, verbose=verbose, **kwargs)
-        elif isinstance(input, dict):
-            params_, job_kwargs = split_job_kwargs(kwargs)
-            assert len(params_) == 0, (
-                "Too many arguments for SortingAnalyzer.compute_several_extensions(), "
-                f"please remove the arguments {set(params_)} from the compute function."
-            )
-            self.compute_several_extensions(extensions=input, save=save, verbose=verbose, **job_kwargs)
-        elif isinstance(input, list):
-            params_, job_kwargs = split_job_kwargs(kwargs)
-            assert len(params_) == 0, (
-                "Too many arguments for SortingAnalyzer.compute_several_extensions(), "
-                f"please remove the arguments {set(params_)} from the compute function."
-            )
-            extensions = {k: {} for k in input}
-            if extension_params is not None:
-                for ext_name, ext_params in extension_params.items():
-                    assert (
-                        ext_name in input
-                    ), f"SortingAnalyzer.compute(): Parameters specified for {ext_name}, which is not in the specified {input}"
-                    extensions[ext_name] = ext_params
-            self.compute_several_extensions(extensions=extensions, save=save, verbose=verbose, **job_kwargs)
-        else:
-            raise ValueError("SortingAnalyzer.compute() needs a str, dict or list")
-
-    def compute_one_extension(self, extension_name, save=True, verbose=False, **kwargs) -> "AnalyzerExtension":
-        """
-        Compute one extension.
-
-        Important note: when computing again an extension, all extensions that depend on it
-        will be automatically and silently deleted to keep a coherent data.
-
-        Parameters
-        ----------
-        extension_name : str
-            The name of the extension.
-            For instance "waveforms", "templates", ...
-        save : bool, default: True
-            It the extension can be saved then it is saved.
-            If not then the extension will only live in memory as long as the object is deleted.
-            save=False is convenient to try some parameters without changing an already saved extension.
-
-        **kwargs:
-            All other kwargs are transmitted to extension.set_params() or job_kwargs
-
-        Returns
-        -------
-        result_extension : AnalyzerExtension
-            Return the extension instance
-
-        Examples
-        --------
-
-        >>> Note that the return is the instance extension.
-        >>> extension = sorting_analyzer.compute("waveforms", **some_params)
-        >>> extension = sorting_analyzer.compute_one_extension("waveforms", **some_params)
-        >>> wfs = extension.data["waveforms"]
-        >>> # Note this can be be done in the old way style BUT the return is not the same it return directly data
-        >>> wfs = compute_waveforms(sorting_analyzer, **some_params)
-
-        """
-        extension_class = get_extension_class(extension_name)
-
-        for child in _get_children_dependencies(extension_name):
-            if self.has_extension(child):
-                if verbose:
-                    print(f"Deleting extension: {child}")
-                self.delete_extension(child)
-
-        params, job_kwargs = split_job_kwargs(kwargs)
-
-        # check dependencies
-        if extension_class.need_recording:
-            assert (
-                self.has_recording() or self.has_temporary_recording()
-            ), f"Extension {extension_name} requires the recording"
-        required_dependencies = extension_class.get_required_dependencies(**params)
-        for dependency_name in required_dependencies:
-            if "|" in dependency_name:
-                ok = any(self.get_extension(name) is not None for name in dependency_name.split("|"))
-            else:
-                ok = self.get_extension(dependency_name) is not None
-            assert ok, f"Extension {extension_name} requires {dependency_name} to be computed first"
-
-        extension_instance = extension_class(self)
-        extension_instance.set_params(save=save, **params)
-        if extension_class.need_job_kwargs:
-            extension_instance.run(save=save, verbose=verbose, **job_kwargs)
-        else:
-            extension_instance.run(save=save, verbose=verbose)
-
-        self.extensions[extension_name] = extension_instance
-        return extension_instance
-
-    def compute_several_extensions(self, extensions, save=True, verbose=False, **job_kwargs):
-        """
-        Compute several extensions
-
-        Important note: when computing again an extension, all extensions that depend on it
-        will be automatically and silently deleted to keep a coherent data.
-
-
-        Parameters
-        ----------
-        extensions : dict
-            Keys are extension_names and values are params.
-        save : bool, default: True
-            It the extension can be saved then it is saved.
-            If not then the extension will only live in memory as long as the object is deleted.
-            save=False is convenient to try some parameters without changing an already saved extension.
-
-        Returns
-        -------
-        No return
-
-        Examples
-        --------
-
-        >>> sorting_analyzer.compute({"waveforms": {"ms_before": 1.2}, "templates" : {"operators": ["average", "std", ]} })
-        >>> sorting_analyzer.compute_several_extensions({"waveforms": {"ms_before": 1.2}, "templates" : {"operators": ["average", "std"]}})
-
-        """
-        # Check dependencies: either already computed or in the extensions to compute
-        extensions_to_compute = list(extensions.keys())
-        for extension_name, extension_params in extensions.items():
-            required_dependencies = get_extension_class(extension_name).get_required_dependencies(**extension_params)
-            for dependency_name in required_dependencies:
-                if "|" in dependency_name:
-                    ok = any(
-                        self.has_extension(name) or name in extensions_to_compute for name in dependency_name.split("|")
-                    )
-                else:
-                    ok = self.has_extension(dependency_name) or dependency_name in extensions_to_compute
-                assert ok, f"Extension {extension_name} requires {dependency_name} to be computed first"
-
-        # Sort extensions by dependency order
-        sorted_extensions = _sort_extensions_by_dependency(extensions)
-
-        for extension_name in sorted_extensions.keys():
-            for child in _get_children_dependencies(extension_name):
-                if verbose:
-                    print(f"Deleting extension: {child}")
-                self.delete_extension(child)
-
-        # Group extensions by pipeline usage, to run them together
-        # Extensions whose dependencies (required or optional) include pipeline extensions are run after the pipeline
-        extensions_with_pipeline = {}
-        extensions_pre_pipeline = {}
-        extensions_post_pipeline = {}
-        for extension_name, extension_params in sorted_extensions.items():
-            extension_class = get_extension_class(extension_name)
-            if extension_class.use_nodepipeline:
-                extensions_with_pipeline[extension_name] = extension_params
-            elif any(
-                get_extension_class(d).use_nodepipeline
-                for d in extension_class.get_any_dependencies(**extension_params)
-                if d in sorted_extensions
-            ):
-                extensions_post_pipeline[extension_name] = extension_params
-            else:
-                extensions_pre_pipeline[extension_name] = extension_params
-
-        # First extensions without pipeline
-        for extension_name, extension_params in extensions_pre_pipeline.items():
-            extension_class = get_extension_class(extension_name)
-            if extension_class.need_job_kwargs:
-                self.compute_one_extension(extension_name, save=save, verbose=verbose, **extension_params, **job_kwargs)
-            else:
-                self.compute_one_extension(extension_name, save=save, verbose=verbose, **extension_params)
-        # then extensions with pipeline
-        if len(extensions_with_pipeline) > 0:
-            all_nodes = []
-            result_routage = []
-            extension_instances = {}
-
-            for extension_name, extension_params in extensions_with_pipeline.items():
-                extension_class = get_extension_class(extension_name)
-                assert (
-                    self.has_recording() or self.has_temporary_recording()
-                ), f"Extension {extension_name} requires the recording"
-
-                for variable_name in extension_class.nodepipeline_variables:
-                    result_routage.append((extension_name, variable_name))
-
-                extension_instance = extension_class(self)
-                extension_instance.set_params(save=save, **extension_params)
-                extension_instances[extension_name] = extension_instance
-
-                nodes = extension_instance.get_pipeline_nodes()
-                all_nodes.extend(nodes)
-
-            job_name = "Compute : " + " + ".join(extensions_with_pipeline.keys())
-
-            t_start = perf_counter()
-            results = run_node_pipeline(
-                self.recording,
-                all_nodes,
-                job_kwargs=job_kwargs,
-                job_name=job_name,
-                gather_mode="memory",
-                squeeze_output=False,
-                verbose=verbose,
-            )
-            t_end = perf_counter()
-            # for pipeline node extensions we can only track the runtime of the run_node_pipeline
-            runtime_s = t_end - t_start
-
-            for r, result in enumerate(results):
-                extension_name, variable_name = result_routage[r]
-                extension_instances[extension_name].data[variable_name] = result
-                extension_instances[extension_name].run_info["runtime_s"] = runtime_s
-                extension_instances[extension_name].run_info["run_completed"] = True
-
-            for extension_name, extension_instance in extension_instances.items():
-                self.extensions[extension_name] = extension_instance
-                if save:
-                    extension_instance.save()
-
-        for extension_name, extension_params in extensions_post_pipeline.items():
-            extension_class = get_extension_class(extension_name)
-            if extension_class.need_job_kwargs:
-                self.compute_one_extension(extension_name, save=save, verbose=verbose, **extension_params, **job_kwargs)
-            else:
-                self.compute_one_extension(extension_name, save=save, verbose=verbose, **extension_params)
-
-    def get_saved_extension_names(self):
-        """
-        Get extension names saved in folder or zarr that can be loaded.
-        This do not load data, this only explores the directory.
-        """
-        saved_extension_names = []
-        if self.format == "binary_folder":
-            ext_folder = self.folder / "extensions"
-            if ext_folder.is_dir():
-                for extension_folder in ext_folder.iterdir():
-                    is_saved = extension_folder.is_dir() and (extension_folder / "params.json").is_file()
-                    if not is_saved:
-                        continue
-                    saved_extension_names.append(extension_folder.stem)
-
-        elif self.format == "zarr":
-            zarr_root = self._get_zarr_root(mode="r")
-            if "extensions" in zarr_root.keys():
-                extension_group = zarr_root["extensions"]
-                for extension_name in extension_group.keys():
-                    if "params" in extension_group[extension_name].attrs.keys():
-                        saved_extension_names.append(extension_name)
-
-        else:
-            raise ValueError("SortingAnalyzer.get_saved_extension_names() works only with binary_folder and zarr")
-
-        return saved_extension_names
-
-    def get_extension(self, extension_name: str):
-        """
-        Get a AnalyzerExtension.
-        If not loaded then load is automatic.
-
-        Return None if the extension is not computed yet (this avoids the use of has_extension() and then get it)
-
-        """
-        if extension_name in self.extensions:
-            return self.extensions[extension_name]
-
-        elif self.format != "memory" and self.has_extension(extension_name):
-            self.load_extension(extension_name)
-            return self.extensions[extension_name]
-
-        else:
-            return None
-
-    def load_extension(self, extension_name: str):
-        """
-        Load an extension from a folder or zarr into the `ResultSorting.extensions` dict.
-
-        Parameters
-        ----------
-        extension_name : str
-            The extension name.
-
-        Returns
-        -------
-        ext_instance:
-            The loaded instance of the extension
-
-        """
-        assert (
-            self.format != "memory"
-        ), "SortingAnalyzer.load_extension() does not work for format='memory' use SortingAnalyzer.get_extension() instead"
-
-        extension_class = get_extension_class(extension_name)
-
-        if extension_class is None:
-            return None
-
-        extension_instance = extension_class.load(self)
-
-        self.extensions[extension_name] = extension_instance
-
-        return extension_instance
-
-    def load_all_saved_extension(self):
-        """
-        Load all saved extensions in memory.
-        """
-        for extension_name in self.get_saved_extension_names():
-            self.load_extension(extension_name)
-
-    def delete_extension(self, extension_name) -> None:
-        """
-        Delete the extension from the dict and also in the persistent zarr or folder.
-        """
-
-        # delete from folder or zarr
-        if self.format != "memory" and self.has_extension(extension_name):
-            # need a reload to reset the folder
-            ext = self.load_extension(extension_name)
-            ext.delete()
-
-        # remove from dict
-        self.extensions.pop(extension_name, None)
-
-    def get_loaded_extension_names(self):
-        """
-        Return the loaded or already computed extensions names.
-        """
-        return list(self.extensions.keys())
-
-    def has_extension(self, extension_name: str) -> bool:
-        """
-        Check if the extension exists in memory (dict) or in the folder or in zarr.
-        """
-        if extension_name in self.extensions:
-            return True
-        elif self.format == "memory":
-            return False
-        elif extension_name in self.get_saved_extension_names():
-            return True
-        else:
-            return False
-
-    def get_computable_extensions(self):
-        """
-        Get all extensions that can be computed by the analyzer.
-        """
-        return get_available_analyzer_extensions()
-
-    def get_default_extension_params(self, extension_name: str) -> dict:
-        """
-        Get the default params for an extension.
-
-        Parameters
-        ----------
-        extension_name : str
-            The extension name
-
-        Returns
-        -------
-        default_params : dict
-            The default parameters for the extension
-        """
-        return get_default_analyzer_extension_params(extension_name)
+    # compute, compute_one_extension, compute_several_extensions,
+    # get_saved_extension_names, get_extension, load_extension,
+    # load_all_saved_extension, delete_extension,
+    # get_loaded_extension_names, has_extension,
+    # get_computable_extensions, get_default_extension_params
+    # are all inherited from BaseAnalyzer
 
     def get_metrics_extension_data(self):
         """
@@ -2255,6 +1878,12 @@ class AnalyzerExtension(BaseAnalyzerExtension):
     """
 
     need_recording = False
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Sync SI-specific need_recording → generic need_input
+        if "need_recording" in cls.__dict__:
+            cls.need_input = cls.__dict__["need_recording"]
 
     def __init__(self, sorting_analyzer):
         super().__init__(sorting_analyzer)
