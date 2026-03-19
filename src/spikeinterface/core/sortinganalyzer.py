@@ -23,6 +23,7 @@ import spikeinterface
 from spikeinterface.core import BaseRecording, BaseSorting, aggregate_channels, aggregate_units
 from spikeinterface.core.waveform_tools import has_exceeding_spikes
 
+from .baseanalyzer import BaseAnalyzerExtension
 from .recording_tools import check_probe_do_not_overlap, get_rec_attributes, do_recording_attributes_match
 from .core_tools import (
     check_json,
@@ -2237,79 +2238,30 @@ def get_default_analyzer_extension_params(extension_name: str):
     return default_params
 
 
-class AnalyzerExtension:
+class AnalyzerExtension(BaseAnalyzerExtension):
     """
-    This the base class to extend the SortingAnalyzer.
-    It can handle persistency to disk for any computations related to:
+    Extension class for SortingAnalyzer.
 
-    For instance:
-      * waveforms
-      * principal components
-      * spike amplitudes
-      * quality metrics
+    Adds SortingAnalyzer-specific features on top of BaseAnalyzerExtension:
+      * ``sorting_analyzer`` / ``sparsity`` properties
+      * ``need_recording`` attribute
+      * ``merge()`` / ``split()`` methods and their abstract hooks
+      * ``function_factory()`` with WaveformExtractor backward compatibility
 
-    Possible extension can be registered on-the-fly at import time with register_result_extension() mechanism.
-    It also enables any custom computation on top of the SortingAnalyzer to be implemented by the user.
-
-    An extension needs to inherit from this class and implement some attributes and abstract methods:
-
-      * extension_name
-      * depend_on
-      * need_recording
-      * use_nodepipeline
-      * nodepipeline_variables only if use_nodepipeline=True
-      * need_job_kwargs
-      * _set_params()
-      * _run()
-      * _select_extension_data()
-      * _merge_extension_data()
-      * _split_extension_data()
-      * _get_data()
-
-    The subclass must also set an `extension_name` class attribute which is not None by default.
-
-    The subclass must also hanle an attribute `data` which is a dict contain the results after the `run()`.
-
-    All AnalyzerExtension will have a function associate for instance (this use the function_factory):
-    compute_unit_location(sorting_analyzer, ...) will be equivalent to sorting_analyzer.compute("unit_location", ...)
-
-
+    Subclasses must additionally implement:
+      * ``_select_extension_data(unit_ids)``
+      * ``_merge_extension_data(...)``
+      * ``_split_extension_data(...)``
     """
 
-    extension_name = None
-    depend_on = []
     need_recording = False
-    use_nodepipeline = False
-    nodepipeline_variables = None
-    need_job_kwargs = False
-    need_backward_compatibility_on_load = False
 
     def __init__(self, sorting_analyzer):
-        self._sorting_analyzer = weakref.ref(sorting_analyzer)
+        super().__init__(sorting_analyzer)
 
-        self.params = None
-        self.run_info = self._default_run_info_dict()
-        self.data = dict()
-
-    def _default_run_info_dict(self):
-        return dict(run_completed=False, runtime_s=None)
-
-    #######
-    # This 3 methods must be implemented in the subclass!!!
-    # See DummyAnalyzerExtension in test_sortinganalyzer.py as a simple example
-    def _run(self, **kwargs):
-        # must be implemented in subclass
-        # must populate the self.data dictionary
-        raise NotImplementedError
-
-    def _set_params(self, **params):
-        # must be implemented in subclass
-        # must return a cleaned version of params dict
-        raise NotImplementedError
-
-    def _select_extension_data(self, unit_ids):
-        # must be implemented in subclass
-        raise NotImplementedError
+    # ------------------------------------------------------------------
+    # SI-specific abstract methods
+    # ------------------------------------------------------------------
 
     def _merge_extension_data(
         self, merge_unit_groups, new_unit_ids, new_sorting_analyzer, keep_mask, verbose=False, **job_kwargs
@@ -2321,17 +2273,80 @@ class AnalyzerExtension:
         # must be implemented in subclass
         raise NotImplementedError
 
-    def _get_pipeline_nodes(self):
-        # must be implemented in subclass only if use_nodepipeline=True
-        raise NotImplementedError
+    # ------------------------------------------------------------------
+    # SI-specific properties
+    # ------------------------------------------------------------------
 
-    def _get_data(self):
-        # must be implemented in subclass
-        raise NotImplementedError
+    @property
+    def sorting_analyzer(self):
+        # Important : to avoid the SortingAnalyzer referencing a AnalyzerExtension
+        # and AnalyzerExtension referencing a SortingAnalyzer we need a weakref.
+        # Otherwise the garbage collector is not working properly.
+        # and so the SortingAnalyzer + its recording are still alive even after deleting explicitly
+        # the SortingAnalyzer which makes it impossible to delete the folder when using memmap.
+        return self.analyzer
 
-    def _handle_backward_compatibility_on_load(self):
-        # must be implemented in subclass only if need_backward_compatibility_on_load=True
-        raise NotImplementedError
+    @property
+    def sparsity(self):
+        return self.sorting_analyzer.sparsity
+
+    # ------------------------------------------------------------------
+    # CSV index coercion hook
+    # ------------------------------------------------------------------
+
+    def _get_entity_ids(self):
+        return self.sorting_analyzer.unit_ids
+
+    # ------------------------------------------------------------------
+    # Copy with SI parameter name
+    # ------------------------------------------------------------------
+
+    def copy(self, new_sorting_analyzer, unit_ids=None):
+        # alessio : please note that this also replace the old select_units!!!
+        return super().copy(new_sorting_analyzer, ids=unit_ids)
+
+    # ------------------------------------------------------------------
+    # SI-specific merge / split
+    # ------------------------------------------------------------------
+
+    def merge(
+        self,
+        new_sorting_analyzer,
+        merge_unit_groups,
+        new_unit_ids,
+        keep_mask=None,
+        verbose=False,
+        **job_kwargs,
+    ):
+        new_extension = self.__class__(new_sorting_analyzer)
+        new_extension.params = self.params.copy()
+        new_extension.data = self._merge_extension_data(
+            merge_unit_groups, new_unit_ids, new_sorting_analyzer, keep_mask, verbose=verbose, **job_kwargs
+        )
+        new_extension.run_info = copy(self.run_info)
+        new_extension.save()
+        return new_extension
+
+    def split(
+        self,
+        new_sorting_analyzer,
+        split_units,
+        new_unit_ids,
+        verbose=False,
+        **job_kwargs,
+    ):
+        new_extension = self.__class__(new_sorting_analyzer)
+        new_extension.params = self.params.copy()
+        new_extension.data = self._split_extension_data(
+            split_units, new_unit_ids, new_sorting_analyzer, verbose=verbose, **job_kwargs
+        )
+        new_extension.run_info = copy(self.run_info)
+        new_extension.save()
+        return new_extension
+
+    # ------------------------------------------------------------------
+    # SI-specific function_factory with backward compatibility
+    # ------------------------------------------------------------------
 
     @classmethod
     def function_factory(cls):
@@ -2371,518 +2386,14 @@ class AnalyzerExtension:
         func.__doc__ = cls.__doc__
         return func
 
-    @property
-    def sorting_analyzer(self):
-        # Important : to avoid the SortingAnalyzer referencing a AnalyzerExtension
-        # and AnalyzerExtension referencing a SortingAnalyzer we need a weakref.
-        # Otherwise the garbage collector is not working properly.
-        # and so the SortingAnalyzer + its recording are still alive even after deleting explicitly
-        # the SortingAnalyzer which makes it impossible to delete the folder when using memmap.
-        sorting_analyzer = self._sorting_analyzer()
-        if sorting_analyzer is None:
-            raise ValueError(f"The extension {self.extension_name} has lost its SortingAnalyzer")
-        return sorting_analyzer
-
-    # some attribuites come from sorting_analyzer
-    @property
-    def format(self):
-        return self.sorting_analyzer.format
-
-    @property
-    def sparsity(self):
-        return self.sorting_analyzer.sparsity
-
-    @property
-    def folder(self):
-        return self.sorting_analyzer.folder
-
-    def _get_binary_extension_folder(self):
-        extension_folder = self.folder / "extensions" / self.extension_name
-        return extension_folder
-
-    def _get_zarr_extension_group(self, mode="r+"):
-        zarr_root = self.sorting_analyzer._get_zarr_root(mode=mode)
-        extension_group = zarr_root["extensions"][self.extension_name]
-        return extension_group
-
-    @classmethod
-    def load(cls, sorting_analyzer):
-        ext = cls(sorting_analyzer)
-        ext.load_params()
-        ext.load_run_info()
-        if ext.run_info is not None:
-            if ext.run_info["run_completed"]:
-                ext.load_data()
-                if cls.need_backward_compatibility_on_load:
-                    ext._handle_backward_compatibility_on_load()
-                if len(ext.data) > 0:
-                    return ext
-        else:
-            # this is for back-compatibility of old analyzers
-            ext.load_data()
-            if cls.need_backward_compatibility_on_load:
-                ext._handle_backward_compatibility_on_load()
-            if len(ext.data) > 0:
-                return ext
-        # If extension run not completed, or data has gone missing,
-        # return None to indicate that the extension should be (re)computed.
-        return None
-
-    @classmethod
-    def get_required_dependencies(cls, **params):
-        """
-        Return required parent extensions that the extension
-        depends on. By default, retuired extensions are the ones in the
-        ``cls.depend_on`` attribute and optional extensions are an empty list.
-        The behavior can be overridden in sub-classes.
-
-        Returns
-        -------
-        list
-            A list of extension names that this extension depends on.
-        """
-        return cls.depend_on
-
-    @classmethod
-    def get_optional_dependencies(cls, **params):
-        """
-        Return optional parent extensions that the extension
-        depends on. By default, optional extensions are an empty list.
-        The behavior can be overridden in sub-classes.
-
-        Returns
-        -------
-        list
-            A list of extension names that this extension optionally depends on.
-        """
-        return []
-
-    @classmethod
-    def get_any_dependencies(cls, **params):
-        """
-        Return all parent extensions that the extension depends on.
-        Dependencies with "|" operator are flattened.
-
-        Returns
-        -------
-        list
-            A list of extension names that this extension depends on.
-        """
-        required = cls.get_required_dependencies(**params)
-        optional = cls.get_optional_dependencies(**params)
-        # flatten dependencies with "|"
-        all_dependencies = required + optional
-        all_dependencies = list(chain.from_iterable([dep.split("|") for dep in all_dependencies]))
-        return all_dependencies
+    # ------------------------------------------------------------------
+    # Override get_default_params to use the module-level function
+    # (goes through get_extension_class → auto-import machinery)
+    # ------------------------------------------------------------------
 
     @classmethod
     def get_default_params(cls):
-        """
-        Get the default params for the extension.
-
-        Returns
-        -------
-        default_params : dict
-            The default parameters for the extension.
-        """
         return get_default_analyzer_extension_params(cls.extension_name)
-
-    def load_run_info(self):
-        run_info = None
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            run_info_file = extension_folder / "run_info.json"
-            if run_info_file.is_file():
-                with open(str(run_info_file), "r") as f:
-                    run_info = json.load(f)
-
-        elif self.format == "zarr":
-            extension_group = self._get_zarr_extension_group(mode="r")
-            run_info = extension_group.attrs.get("run_info", None)
-
-        if run_info is None:
-            warnings.warn(f"Found no run_info file for {self.extension_name}, extension should be re-computed.")
-        self.run_info = run_info
-
-    def load_params(self):
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            params_file = extension_folder / "params.json"
-            assert params_file.is_file(), f"No params file in extension {self.extension_name} folder"
-            with open(str(params_file), "r") as f:
-                params = json.load(f)
-
-        elif self.format == "zarr":
-            extension_group = self._get_zarr_extension_group(mode="r")
-            assert "params" in extension_group.attrs, f"No params file in extension {self.extension_name} folder"
-            params = extension_group.attrs["params"]
-
-        self.params = params
-
-    def load_data(self):
-        ext_data = None
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            for ext_data_file in extension_folder.iterdir():
-                # patch for https://github.com/SpikeInterface/spikeinterface/issues/3041
-                # maybe add a check for version number from the info.json during loading only
-                if (
-                    ext_data_file.name == "params.json"
-                    or ext_data_file.name == "info.json"
-                    or ext_data_file.name == "run_info.json"
-                    or str(ext_data_file.name).startswith("._")  # ignore AppleDouble format files
-                ):
-                    continue
-                ext_data_name = ext_data_file.stem
-                if ext_data_file.suffix == ".json":
-                    with ext_data_file.open("r") as f:
-                        ext_data = json.load(f)
-                elif ext_data_file.suffix == ".npy":
-                    # The lazy loading of an extension is complicated because if we compute again
-                    # and have a link to the old buffer on windows then it fails
-                    # ext_data = np.load(ext_data_file, mmap_mode="r")
-                    # so we go back to full loading
-                    ext_data = np.load(ext_data_file)
-                elif ext_data_file.suffix == ".csv":
-                    import pandas as pd
-
-                    ext_data = pd.read_csv(ext_data_file, index_col=0)
-                    # we need to cast the index to the unit id dtype (int or str)
-                    unit_ids = self.sorting_analyzer.unit_ids
-                    if ext_data.shape[0] == unit_ids.size:
-                        # we force dtype to be the same as unit_ids
-                        if ext_data.index.dtype != unit_ids.dtype:
-                            ext_data.index = ext_data.index.astype(unit_ids.dtype)
-
-                elif ext_data_file.suffix == ".pkl":
-                    with ext_data_file.open("rb") as f:
-                        ext_data = pickle.load(f)
-                else:
-                    continue
-                self.set_data(ext_data_name, ext_data)
-        elif self.format == "zarr":
-            extension_group = self._get_zarr_extension_group(mode="r")
-            for ext_data_name in extension_group.keys():
-                ext_data_ = extension_group[ext_data_name]
-                if "dict" in ext_data_.attrs:
-                    ext_data = ext_data_[0]
-                elif "dataframe" in ext_data_.attrs:
-                    import pandas as pd
-
-                    index = ext_data_["index"]
-                    ext_data = pd.DataFrame(index=index)
-                    for col in ext_data_.keys():
-                        if col != "index":
-                            ext_data.loc[:, col] = ext_data_[col][:]
-                    ext_data = ext_data.convert_dtypes()
-                elif "object" in ext_data_.attrs:
-                    ext_data = ext_data_[0]
-                else:
-                    # this load in memmory
-                    ext_data = np.array(ext_data_)
-                self.set_data(ext_data_name, ext_data)
-
-        if len(self.data) == 0:
-            warnings.warn(f"Found no data for {self.extension_name}, extension should be re-computed.")
-
-    def copy(self, new_sorting_analyzer, unit_ids=None):
-        # alessio : please note that this also replace the old select_units!!!
-        new_extension = self.__class__(new_sorting_analyzer)
-        new_extension.params = self.params.copy()
-        if unit_ids is None:
-            new_extension.data = self.data
-        else:
-            new_extension.data = self._select_extension_data(unit_ids)
-        new_extension.run_info = copy(self.run_info)
-        new_extension.save()
-        return new_extension
-
-    def merge(
-        self,
-        new_sorting_analyzer,
-        merge_unit_groups,
-        new_unit_ids,
-        keep_mask=None,
-        verbose=False,
-        **job_kwargs,
-    ):
-        new_extension = self.__class__(new_sorting_analyzer)
-        new_extension.params = self.params.copy()
-        new_extension.data = self._merge_extension_data(
-            merge_unit_groups, new_unit_ids, new_sorting_analyzer, keep_mask, verbose=verbose, **job_kwargs
-        )
-        new_extension.run_info = copy(self.run_info)
-        new_extension.save()
-        return new_extension
-
-    def split(
-        self,
-        new_sorting_analyzer,
-        split_units,
-        new_unit_ids,
-        verbose=False,
-        **job_kwargs,
-    ):
-        new_extension = self.__class__(new_sorting_analyzer)
-        new_extension.params = self.params.copy()
-        new_extension.data = self._split_extension_data(
-            split_units, new_unit_ids, new_sorting_analyzer, verbose=verbose, **job_kwargs
-        )
-        new_extension.run_info = copy(self.run_info)
-        new_extension.save()
-        return new_extension
-
-    def run(self, save=True, **kwargs):
-        if save and not self.sorting_analyzer.is_read_only():
-            # NB: this call to _save_params() also resets the folder or zarr group
-            self._save_params()
-            self._save_importing_provenance()
-
-        t_start = perf_counter()
-        self._run(**kwargs)
-        t_end = perf_counter()
-        self.run_info["runtime_s"] = t_end - t_start
-        self.run_info["run_completed"] = True
-
-        if save and not self.sorting_analyzer.is_read_only():
-            self._save_run_info()
-            self._save_data()
-            if self.format == "zarr":
-                import zarr
-
-                zarr.consolidate_metadata(self.sorting_analyzer._get_zarr_root().store)
-
-    def save(self):
-        self._save_params()
-        self._save_importing_provenance()
-        self._save_run_info()
-        self._save_data()
-
-        if self.format == "zarr":
-            import zarr
-
-            zarr.consolidate_metadata(self.sorting_analyzer._get_zarr_root().store)
-
-    def _save_data(self):
-        if self.format == "memory":
-            return
-
-        if self.sorting_analyzer.is_read_only():
-            raise ValueError(f"The SortingAnalyzer is read-only saving extension {self.extension_name} is not possible")
-
-        try:
-            # pandas is a weak dependency for spikeinterface.core
-            import pandas as pd
-
-            HAS_PANDAS = True
-        except:
-            HAS_PANDAS = False
-
-        if self.format == "binary_folder":
-
-            extension_folder = self._get_binary_extension_folder()
-            for ext_data_name, ext_data in self.data.items():
-                if isinstance(ext_data, dict):
-                    ext_data_ = check_json(ext_data)
-                    with (extension_folder / f"{ext_data_name}.json").open("w") as f:
-                        json.dump(ext_data_, f)
-                elif isinstance(ext_data, np.ndarray):
-                    data_file = extension_folder / f"{ext_data_name}.npy"
-                    if isinstance(ext_data, np.memmap) and data_file.exists():
-                        # important some SortingAnalyzer like ComputeWaveforms already run the computation with memmap
-                        # so no need to save theses array
-                        pass
-                    else:
-                        np.save(data_file, ext_data)
-                elif HAS_PANDAS and isinstance(ext_data, pd.DataFrame):
-                    ext_data.to_csv(extension_folder / f"{ext_data_name}.csv", index=True)
-                else:
-                    try:
-                        with (extension_folder / f"{ext_data_name}.pkl").open("wb") as f:
-                            pickle.dump(ext_data, f)
-                    except:
-                        raise Exception(f"Could not save {ext_data_name} as extension data")
-        elif self.format == "zarr":
-            import numcodecs
-
-            saving_options = self.sorting_analyzer._backend_options.get("saving_options", {})
-            extension_group = self._get_zarr_extension_group(mode="r+")
-
-            # if compression is not externally given, we use the default
-            if "compressor" not in saving_options:
-                saving_options["compressor"] = get_default_zarr_compressor()
-
-            for ext_data_name, ext_data in self.data.items():
-                if ext_data_name in extension_group:
-                    del extension_group[ext_data_name]
-                if isinstance(ext_data, (dict, list)):
-                    ext_data_ = check_json(ext_data)
-                    extension_group.create_dataset(
-                        name=ext_data_name, data=np.array([ext_data_], dtype=object), object_codec=numcodecs.JSON()
-                    )
-                    extension_group[ext_data_name].attrs["dict"] = True
-                elif isinstance(ext_data, np.ndarray):
-                    extension_group.create_dataset(name=ext_data_name, data=ext_data, **saving_options)
-                elif HAS_PANDAS and isinstance(ext_data, pd.DataFrame):
-                    df_group = extension_group.create_group(ext_data_name)
-                    # first we save the index
-                    indices = ext_data.index.to_numpy()
-                    if indices.dtype.kind == "O":
-                        indices = indices.astype(str)
-                    df_group.create_dataset(name="index", data=indices)
-                    for col in ext_data.columns:
-                        col_data = ext_data[col].to_numpy()
-                        if col_data.dtype.kind == "O":
-                            col_data = col_data.astype(str)
-                        df_group.create_dataset(name=col, data=col_data)
-                    df_group.attrs["dataframe"] = True
-                else:
-                    # any object
-                    try:
-                        extension_group.create_dataset(
-                            name=ext_data_name, data=np.array([ext_data], dtype=object), object_codec=numcodecs.Pickle()
-                        )
-                    except:
-                        raise Exception(f"Could not save {ext_data_name} as extension data")
-                    extension_group[ext_data_name].attrs["object"] = True
-
-    def _reset_extension_folder(self):
-        """
-        Delete the extension in a folder (binary or zarr) and create an empty one.
-        """
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            if extension_folder.is_dir():
-                shutil.rmtree(extension_folder)
-            extension_folder.mkdir(exist_ok=False, parents=True)
-
-        elif self.format == "zarr":
-            import zarr
-
-            zarr_root = self.sorting_analyzer._get_zarr_root(mode="r+")
-            _ = zarr_root["extensions"].create_group(self.extension_name, overwrite=True)
-            zarr.consolidate_metadata(zarr_root.store)
-
-    def _delete_extension_folder(self):
-        """
-        Delete the extension in a folder (binary or zarr).
-        """
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            if extension_folder.is_dir():
-                shutil.rmtree(extension_folder)
-
-        elif self.format == "zarr":
-            import zarr
-
-            zarr_root = self.sorting_analyzer._get_zarr_root(mode="r+")
-            if self.extension_name in zarr_root["extensions"]:
-                del zarr_root["extensions"][self.extension_name]
-                zarr.consolidate_metadata(zarr_root.store)
-
-    def delete(self):
-        """
-        Delete the extension from the folder or zarr and from the dict.
-        """
-        self._delete_extension_folder()
-        self.params = None
-        self.run_info = self._default_run_info_dict()
-        self.data = dict()
-
-    def reset(self):
-        """
-        Reset the extension.
-        Delete the sub folder and create a new empty one.
-        """
-        self._reset_extension_folder()
-        self.params = None
-        self.run_info = self._default_run_info_dict()
-        self.data = dict()
-
-    def set_params(self, save=True, **params):
-        """
-        Set parameters for the extension and
-        make it persistent in json.
-        """
-        # this ensure data is also deleted and corresponds to params
-        # this also ensure the group is created
-        if save:
-            self._reset_extension_folder()
-
-        params = self._set_params(**params)
-        self.params = params
-
-        if self.sorting_analyzer.is_read_only():
-            return
-
-        if save:
-            self._save_params()
-            self._save_importing_provenance()
-
-    def _save_params(self):
-        params_to_save = self.params.copy()
-
-        self._reset_extension_folder()
-
-        # TODO make sparsity local Result specific
-        # if "sparsity" in params_to_save and params_to_save["sparsity"] is not None:
-        #     assert isinstance(
-        #         params_to_save["sparsity"], ChannelSparsity
-        #     ), "'sparsity' parameter must be a ChannelSparsity object!"
-        #     params_to_save["sparsity"] = params_to_save["sparsity"].to_dict()
-
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            extension_folder.mkdir(exist_ok=True, parents=True)
-            param_file = extension_folder / "params.json"
-            param_file.write_text(json.dumps(check_json(params_to_save), indent=4), encoding="utf8")
-        elif self.format == "zarr":
-            extension_group = self._get_zarr_extension_group(mode="r+")
-            extension_group.attrs["params"] = check_json(params_to_save)
-
-    def _save_importing_provenance(self):
-        # this saves the class info, this is not uselful at the moment but could be useful in future
-        # if some class changes the data model and if we need to make backwards compatibility
-        # we have the same machanism in base.py for recording and sorting
-
-        info = retrieve_importing_provenance(self.__class__)
-        if self.format == "binary_folder":
-            extension_folder = self._get_binary_extension_folder()
-            extension_folder.mkdir(exist_ok=True, parents=True)
-            info_file = extension_folder / "info.json"
-            info_file.write_text(json.dumps(info, indent=4), encoding="utf8")
-        elif self.format == "zarr":
-            extension_group = self._get_zarr_extension_group(mode="r+")
-            extension_group.attrs["info"] = info
-
-    def _save_run_info(self):
-        if self.run_info is not None:
-            run_info = self.run_info.copy()
-
-            if self.format == "binary_folder":
-                extension_folder = self._get_binary_extension_folder()
-                run_info_file = extension_folder / "run_info.json"
-                run_info_file.write_text(json.dumps(run_info, indent=4), encoding="utf8")
-            elif self.format == "zarr":
-                extension_group = self._get_zarr_extension_group(mode="r+")
-                extension_group.attrs["run_info"] = run_info
-
-    def get_pipeline_nodes(self):
-        assert (
-            self.use_nodepipeline
-        ), "AnalyzerExtension.get_pipeline_nodes() must be called only when use_nodepipeline=True"
-        return self._get_pipeline_nodes()
-
-    def get_data(self, *args, **kwargs):
-        if self.run_info is not None:
-            assert self.run_info[
-                "run_completed"
-            ], f"You must run the extension {self.extension_name} before retrieving data"
-        assert len(self.data) > 0, "Extension has been run but no data found."
-        return self._get_data(*args, **kwargs)
-
-    def set_data(self, ext_data_name, ext_data):
-        self.data[ext_data_name] = ext_data
 
 
 # this is a hardcoded list to to improve error message and auto_import mechanism
