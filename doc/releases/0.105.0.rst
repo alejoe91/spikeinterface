@@ -1,0 +1,141 @@
+.. _release0.105.0:
+
+SpikeInterface 0.105.0 release notes
+------------------------------------
+
+July XXX 2026
+
+Main changes:
+
+...
+
+core:
+
+* `write_binary`: `None` dtype should be replaced by actual dtype (#4622)
+* Remove deduplicated columns in `get_metrics_extension_data` (#4609)
+* Use np.load(..., mmap_mode="r") for time_vector in `BaseRecording._extra_metadata_from_folder` (#4608)
+* Fix file size calculation in `write_binary()` (#4607)
+* `SortingAnalyzer`: intepret any remote path as zarr (#4583)
+* Handle failure in dumping sorting provenance to Zarr (#4577)
+* Add SelectSegmentEvent (#4575)
+* Improve backward compatibility for dartsort after the chunkable PR  (#4559)
+* Add `shift_times` to `BaseSorting` (#4551)
+* Improvements over chuking refactoring (#4533)
+* Add `get_start_time`, `get_end_time`, and `get_last_spike_frame` to `BaseSorting` (#4525)
+* Add `t_starts` parameter to `generate_recording` and `generate_sorting` (#4523)
+* Add regression test for GH-4508 (deprecated metric names in legacy WE folders) (#4514)
+* Improve `get_times` function to slice timestamps (#4512)
+* Replace int() truncation with shared ms_to_samples()  (#4484)
+* Implement `ChunkableMixin` (#4472)
+* Add `zarr_class_info` attribute to zarr files for unambiguous and extendible zarr read (#4467)
+* Use `ProbeGroup` object instead of `contact_vector` property and  `set_probe/probegroup` from `select_channels_with_probe/probegroup` (#4465)
+* Centralize `add_segment` and `segments` to `BaseExtractor` (#4462)
+
+extractors:
+
+* Materialize electrode-table columns before indexing in the NWB recording extractor (#4627)
+* Fix `read_mclust` returning zero units for `.t` files (#4626)
+* Use probeinterface's renamed Neuropixels readers and new probe detectors (#4593)
+* Open Ephys: find root folder to correctly look for timestamps (#4500)
+* Fix: Align CompressedBinaryIBLExtractor with updated get_neuropixels_sample_shifts s… (#4477)
+* Remove load sync channel (#4466)
+
+preprocessing:
+
+* Hotfix: overflow error in correct LSB (#4610)
+* Fix filter kwargs (#4543)
+* Extend artifact detection: `DetectAndRemoveArtifacts` preprocessor and signed saturation (#4539)
+* Fix false-positive margin warning in forkserver workers (#4506)
+* Fix resampling of gapped recordings. (#4499)
+* Allow overwrite argument when saving motion object (#4464)
+* Refactor artifacts detection + add saturation detection (#4297)
+
+postprocessing:
+
+* "Allow" for 3D channel locations for compute unit locs and template metrics (#4572)
+* Vectorize per-channel PCA transform in `run_for_all_spikes` (#4488)
+* Make `get_data` for valid unit periods use unit ids, not indices (#4468)
+
+metrics:
+
+* QualityMetrics: store `use_valid_periods` param (#4596)
+* Remove `tmp_data_to_save` when loading old analyzers (#4480)
+
+curation:
+
+* Propagate `self.tmp_data_to_save` when selecting units in `BaseMeticExtension` (#4616)
+* Vectorize _find_duplicated_spikes_keep_first/last_iterative kernels. (#4614)
+* change to using upset-bombcell package (#4493)
+* Make sure default automerge params reflect their type (#4483)
+
+widgets:
+
+* Figpack metrics serialization and curation args (#4632)
+* fix unit presence time_range (#4571)
+* Fix sortingview "backend" in `plot_sorting_summary` (#4554)
+* Add `sort_by_depth` kwargs to `RasterWidget` (#4544)
+
+generators:
+
+* Small change to add amplitude jitter in drifting_generator (#4592)
+* Use mock instead of generate in tests (#4587)
+* Generate recording with probe from library (#4568)
+
+sortingcomponents:
+
+* Add install check for components sorters (#4574)
+* Small fix in nodepipeline that prevent tdc peeler in drift-aware mode (#4557)
+
+documentation:
+
+* Update release dates and add 0.104.4 (#4613)
+* Make version mismatch warning informative and actionable (#4505)
+* Fix doc typo on home page (#4492)
+
+continuous integration:
+
+* Update actions versions (#4585)
+* Modularize CI test and runtime dependencies per module (#4541)
+* Fix numpy and scipy failures on the CI (#4534)
+* Loosen import-time gate on Windows and unpin pytest (#4532)
+* Use uv and caching in CI (#4515)
+
+packaging:
+
+* Use probeinterface and neo source when using spikeinterface source (#4615)
+* Use legacy numpy versions for ks 4.1.1-4.1.6 tests (#4591)
+* Add install check for components sorters (#4574)
+* Fix module level test groups (#4573)
+* Modularize CI test and runtime dependencies per module (#4541)
+
+testing:
+
+* Fix interpolate tests after probeinterface to_numpy change (#4637)
+* Fix curation tests for missing kachery dependency (#4599)
+* Use legacy numpy versions for ks 4.1.1-4.1.6 tests (#4591)
+* Fix module level test groups (#4573)
+* Fix failing tests (#4560)
+* Modularize CI test and runtime dependencies per module (#4541)
+* Speed up `test_sorting_s3_nwb_zarr` (again) (#4538)
+* Fix tests paths (#4490)
+
+deprecations:
+
+* Segment backward compatibility (#4542)
+
+Contributors:
+
+* @Antorhythms
+* @Julie-Fabre
+* @alejoe91
+* @chrishalcrow
+* @cwindolf
+* @ecobost
+* @galenlynch
+* @grahamfindlay
+* @h-mayorquin
+* @hayleybounds
+* @samuelgarcia
+* @tayheau
+* @yger
+* @zm711
