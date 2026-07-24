@@ -967,7 +967,7 @@ class BaseSorting(BaseExtractor):
 
         """
 
-        if self._cached_spike_vector is None and use_cache:
+        if self._cached_spike_vector is None:
             self._compute_and_cache_spike_vector()
 
         if extremum_channel_inds is not None:
