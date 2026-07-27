@@ -28,6 +28,8 @@ class ModelBasedClassification:
     ----------
     sorting_analyzer : SortingAnalyzer
         The sorting analyzer object containing the spike sorting data.
+    metrics : pd.DataFrame
+        A DataFrame containing the metrics for the units.
     pipeline : Pipeline
         The pipeline object representing the trained classification model.
 
@@ -37,18 +39,28 @@ class ModelBasedClassification:
         Predicts the labels for the spike sorting data using the trained model.
     """
 
-    def __init__(self, sorting_analyzer: SortingAnalyzer, pipeline):
+    def __init__(
+        self, sorting_analyzer: SortingAnalyzer | None = None, metrics: "pd.DataFrame | None" = None, pipeline=None
+    ):
         from sklearn.pipeline import Pipeline
 
         if not isinstance(pipeline, Pipeline):
             raise ValueError("The `pipeline` must be an instance of sklearn.pipeline.Pipeline")
 
+        if sorting_analyzer is None and metrics is None:
+            raise ValueError("At least one of `sorting_analyzer` or `metrics` must be provided.")
         self.sorting_analyzer = sorting_analyzer
+        self.metrics = metrics
         self.pipeline = pipeline
         self.required_metrics = pipeline.feature_names_in_
 
     def predict_labels(
-        self, label_conversion=None, input_data=None, export_to_phy=False, model_info=None, enforce_metric_params=False
+        self,
+        label_conversion: dict[int, str] | None = None,
+        export_to_phy: bool = False,
+        phy_folder: Path | None = None,
+        model_info: dict | None = None,
+        enforce_metric_params: bool = False,
     ):
         """
         Predicts the labels for the spike sorting data using the trained model.
@@ -61,10 +73,14 @@ class ModelBasedClassification:
         label_conversion : dict or None, default: None
             A dictionary for converting the predicted labels (which are integers) to custom labels. If None,
             tries to find in `model_info` file. The dictionary should have the format {old_label: new_label}.
-        input_data : pandas.DataFrame or None, default: None
-            The input data for classification. If not provided, the method will extract metrics stored in the sorting analyzer.
         export_to_phy : bool, default: False.
             Whether to export the classified units to Phy format. Default is False.
+        phy_folder : Path or None, default: None
+            The path to the Phy folder where the classified units will be exported. If None,
+            the Phy folder will be inferred from the sorting object. If the sorting object does not have a Phy folder,
+            the esport will be skipped.
+        model_info : dict or None, default: None
+            Dictionary of model info containing provenance of the model.
         enforce_metric_params : bool, default: False
             If True and the parameters used to compute the metrics in `sorting_analyzer` are different than the parmeters
             used to compute the metrics used to train the model, this function will raise an error. Otherwise, a warning is raised.
@@ -78,16 +94,19 @@ class ModelBasedClassification:
         import pandas as pd
 
         # Get metrics DataFrame for classification
-        if input_data is None:
-            input_data = self.sorting_analyzer.get_metrics_extension_data()
+        if self.metrics is None:
+            metrics = self.sorting_analyzer.get_metrics_extension_data()
+            unit_ids = self.sorting_analyzer.unit_ids
         else:
-            if not isinstance(input_data, pd.DataFrame):
+            metrics = self.metrics
+            if not isinstance(metrics, pd.DataFrame):
                 raise ValueError("Input data must be a pandas DataFrame")
+            unit_ids = metrics.index.to_list()
 
-        input_data = self.handle_backwards_compatibility_in_metrics(input_data, model_info=model_info)
-        input_data = self._check_required_metrics_are_present(input_data)
+        metrics = _handle_backwards_compatibility_in_metrics(metrics, model_info=model_info)
+        metrics = _check_required_metrics_are_present(self.required_metrics, metrics)
 
-        if model_info is not None:
+        if model_info is not None and self.sorting_analyzer is not None:
             self._check_params_for_classification(enforce_metric_params, model_info=model_info)
 
         if model_info is not None and label_conversion is None:
@@ -100,11 +119,11 @@ class ModelBasedClassification:
             except:
                 warnings.warn("Could not find `label_conversion` key in `model_info.json` file")
 
-        input_data = _format_metric_dataframe(input_data)
+        metrics = _format_metric_dataframe(metrics)
 
         # Apply classifier
-        predictions = self.pipeline.predict(input_data)
-        probabilities = self.pipeline.predict_proba(input_data)
+        predictions = self.pipeline.predict(metrics)
+        probabilities = self.pipeline.predict_proba(metrics)
         probabilities = np.max(probabilities, axis=1)
 
         if isinstance(label_conversion, dict):
@@ -114,68 +133,21 @@ class ModelBasedClassification:
             predictions = [label_conversion[label] for label in predictions]
 
         classified_units = pd.DataFrame(
-            zip(predictions, probabilities), columns=["prediction", "probability"], index=self.sorting_analyzer.unit_ids
+            zip(predictions, probabilities), columns=["prediction", "probability"], index=unit_ids
         )
 
         # Set predictions and probability as sorting properties
-        self.sorting_analyzer.set_sorting_property("classifier_label", predictions)
-        self.sorting_analyzer.set_sorting_property("classifier_probability", probabilities)
+        if self.sorting_analyzer is not None:
+            self.sorting_analyzer.set_sorting_property("classifier_label", predictions)
+            self.sorting_analyzer.set_sorting_property("classifier_probability", probabilities)
 
         if export_to_phy:
-            self._export_to_phy(classified_units)
+
+            if phy_folder is None:
+                raise ValueError("Phy folder must be provided using the `phy_folder` parameter.")
+            classified_units.to_csv(f"{phy_folder}/cluster_prediction.tsv", sep="\t", index_label="cluster_id")
 
         return classified_units
-
-    def handle_backwards_compatibility_in_metrics(self, calculated_metrics, model_info):
-        """
-        Handles backwards compatibility in metric names for models trained with older versions of SpikeInterface.
-        In recent versions, some metric names have been changed for clarity. In addition, the sign of some metrics
-        has been inverted to maintain consistency.
-
-        Parameters
-        ----------
-        calculated_metrics : pd.DataFrame
-            The DataFrame containing the calculated metrics.
-        model_info : dict or None
-            Dictionary of model info containing provenance of the model.
-
-        Returns
-        -------
-        pd.DataFrame
-            The DataFrame with updated metric names for compatibility.
-        """
-        if model_info is None:
-            return calculated_metrics
-        si_version = model_info["requirements"].get("spikeinterface", None)
-        if si_version is not None and parse(si_version) < parse("0.103.2"):
-            # if the model was trained with SI version < 0.103.2, we need to rename some metrics
-            calculated_metrics = calculated_metrics.copy()
-            # peak_to_trough_duration was named peak_to_valley
-            if "peak_to_trough_duration" in calculated_metrics.columns:
-                calculated_metrics = calculated_metrics.rename(columns={"peak_to_trough_duration": "peak_to_valley"})
-            # peak_after_to_trough_ratio was named peak_trough_ratio and had inverted sign
-            if "peak_after_to_trough_ratio" in calculated_metrics.columns:
-                calculated_metrics = calculated_metrics.rename(
-                    columns={"peak_after_to_trough_ratio": "peak_trough_ratio"}
-                )
-                calculated_metrics["peak_trough_ratio"] = -1 * calculated_metrics["peak_trough_ratio"]
-            # trough_half_width was named half_width
-            if "trough_half_width" in calculated_metrics.columns:
-                calculated_metrics = calculated_metrics.rename(columns={"trough_half_width": "half_width"})
-        return calculated_metrics
-
-    def _check_required_metrics_are_present(self, calculated_metrics):
-        # Check all the required metrics have been calculated
-        required_metrics = set(self.required_metrics)
-        if required_metrics.issubset(set(calculated_metrics)):
-            input_data = calculated_metrics[self.required_metrics]
-        else:
-            raise ValueError(
-                "Input data does not contain all required metrics for classification",
-                f"Missing metrics: {required_metrics.difference(calculated_metrics)}",
-            )
-
-        return input_data
 
     def _check_params_for_classification(self, enforce_metric_params=False, model_info=None):
         """
@@ -226,22 +198,10 @@ class ModelBasedClassification:
                     else:
                         warnings.warn(warning_message)
 
-    def _export_to_phy(self, classified_df):
-        """Export the classified units to Phy as cluster_prediction.tsv file"""
-
-        # Export to Phy format
-        try:
-            sorting_path = self.sorting_analyzer.sorting.get_annotation("phy_folder")
-            assert sorting_path is not None
-            assert Path(sorting_path).is_dir()
-        except AssertionError:
-            raise ValueError("Phy folder not found in sorting annotations, or is not a directory")
-
-        classified_df.to_csv(f"{sorting_path}/cluster_prediction.tsv", sep="\t", index_label="cluster_id")
-
 
 def model_based_label_units(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: SortingAnalyzer | None,
+    metrics=None,
     model_folder=None,
     repo_id=None,
     model_name=None,
@@ -261,15 +221,17 @@ def model_based_label_units(
 
     Parameters
     ----------
-    sorting_analyzer : SortingAnalyzer
+    sorting_analyzer : SortingAnalyzer | None
         The sorting analyzer object containing the spike sorting results.
+    metrics : pd.DataFrame | None, default: None
+        A DataFrame with metrics for the units. If None, metrics will be computed from the sorting_analyzer.
     model_folder : str or Path, default: None
         The path to the folder containing the model
     repo_id : str, default: None
         Hugging face repo id which contains the model e.g. 'username/model'
     model_name: str, default: None
         Filename of model e.g. 'my_model.skops'. If None, uses first model found.
-    label_conversion : dic | None, default: None
+    label_conversion : dict | None, default: None
         A dictionary for converting the predicted labels (which are integers) to custom labels. If None,
         tries to extract from `model_info.json` file. The dictionary should have the format {old_label: new_label}.
     export_to_phy : bool, default: False
@@ -305,7 +267,9 @@ def model_based_label_units(
     if not isinstance(model, Pipeline):
         raise ValueError("The model must be an instance of sklearn.pipeline.Pipeline")
 
-    model_based_classification = ModelBasedClassification(sorting_analyzer, model)
+    model_based_classification = ModelBasedClassification(
+        sorting_analyzer=sorting_analyzer, metrics=metrics, pipeline=model
+    )
 
     classified_units = model_based_classification.predict_labels(
         label_conversion=label_conversion,
@@ -452,13 +416,16 @@ def _load_model_from_folder(model_folder=None, model_name=None, trust_model=Fals
     else:
         model_info = json.load(open(model_info_path))
 
-    model_info = handle_backwards_compatibility_metric_params(model_info)
+    model_info = _handle_backwards_compatibility_metric_params(model_info)
 
     return model, model_info
 
 
-def handle_backwards_compatibility_metric_params(model_info):
-
+def _handle_backwards_compatibility_metric_params(model_info):
+    """
+    Handles backwards compatibility in metric parameters for models trained with older versions of SpikeInterface.
+    In recent versions, some metric parameters have been changed for clarity.
+    """
     if (
         model_info.get("metric_params") is not None
         and model_info.get("metric_params").get("quality_metric_params") is not None
@@ -479,3 +446,53 @@ def handle_backwards_compatibility_metric_params(model_info):
             del model_info["metric_params"]["template_metric_params"]["metrics_kwargs"]
 
     return model_info
+
+
+def _handle_backwards_compatibility_in_metrics(calculated_metrics, model_info):
+    """
+    Handles backwards compatibility in metric names for models trained with older versions of SpikeInterface.
+    In recent versions, some metric names have been changed for clarity. In addition, the sign of some metrics
+    has been inverted to maintain consistency.
+
+    Parameters
+    ----------
+    calculated_metrics : pd.DataFrame
+        The DataFrame containing the calculated metrics.
+    model_info : dict or None
+        Dictionary of model info containing provenance of the model.
+
+    Returns
+    -------
+    pd.DataFrame
+        The DataFrame with updated metric names for compatibility.
+    """
+    if model_info is None:
+        return calculated_metrics
+    si_version = model_info["requirements"].get("spikeinterface", None)
+    if si_version is not None and parse(si_version) < parse("0.103.2"):
+        # if the model was trained with SI version < 0.103.2, we need to rename some metrics
+        calculated_metrics = calculated_metrics.copy()
+        # peak_to_trough_duration was named peak_to_valley
+        if "peak_to_trough_duration" in calculated_metrics.columns:
+            calculated_metrics = calculated_metrics.rename(columns={"peak_to_trough_duration": "peak_to_valley"})
+        # peak_after_to_trough_ratio was named peak_trough_ratio and had inverted sign
+        if "peak_after_to_trough_ratio" in calculated_metrics.columns:
+            calculated_metrics = calculated_metrics.rename(columns={"peak_after_to_trough_ratio": "peak_trough_ratio"})
+            calculated_metrics["peak_trough_ratio"] = -1 * calculated_metrics["peak_trough_ratio"]
+        # trough_half_width was named half_width
+        if "trough_half_width" in calculated_metrics.columns:
+            calculated_metrics = calculated_metrics.rename(columns={"trough_half_width": "half_width"})
+    return calculated_metrics
+
+
+def _check_required_metrics_are_present(required_metrics, calculated_metrics):
+    # Check all the required metrics have been calculated, preserving the order expected by the pipeline
+    if set(required_metrics).issubset(set(calculated_metrics.columns)):
+        input_data = calculated_metrics[list(required_metrics)]
+    else:
+        raise ValueError(
+            "Input data does not contain all required metrics for classification",
+            f"Missing metrics: {set(required_metrics).difference(calculated_metrics.columns)}",
+        )
+
+    return input_data
