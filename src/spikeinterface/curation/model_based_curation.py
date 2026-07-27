@@ -104,7 +104,7 @@ class ModelBasedClassification:
             unit_ids = metrics.index.to_list()
 
         metrics = _handle_backwards_compatibility_in_metrics(metrics, model_info=model_info)
-        metrics = _check_required_metrics_are_present(self.required_metrics, metrics)
+        metrics = check_required_metrics_are_present(self.required_metrics, metrics)
 
         if model_info is not None and self.sorting_analyzer is not None:
             self._check_params_for_classification(enforce_metric_params, model_info=model_info)
@@ -281,17 +281,44 @@ def model_based_label_units(
     return classified_units
 
 
-def auto_label_units(*args, **kwargs):
+def get_required_metrics_from_model(
+    model_folder=None, repo_id=None, model_name=None, model=None, trust_model=False, trusted=None
+):
     """
-    Deprecated function. Please use `model_based_label_units` instead.
+    Returns the required metrics for a model, either from a model hosted on HuggingFaceHub or one available in a local folder.
+
+    Parameters
+    ----------
+    model_folder : str or Path, default: None
+        The path to the folder containing the model
+    repo_id : str, default: None
+        Hugging face repo id which contains the model e.g. 'username/model'
+    model_name: str, default: None
+        Filename of model e.g. 'my_model.skops'. If None, uses first model found.
+    model : sklearn.pipeline.Pipeline, default: None
+        A trained sklearn pipeline model. If provided, the required metrics will be extracted from this model
+    trust_model : bool, default: False
+        Whether to trust the model. If True, the `trusted` parameter that is passed to `skops.load` to load the model will be
+        automatically inferred. If False, the `trusted` parameter must be provided to indicate the trusted objects.
+    trusted : list of str, default: None
+        Passed to skops.load. The object will be loaded only if there are only trusted objects and objects of types listed in trusted in the dumped file.
+
+    Returns
+    -------
+    required_metrics : list of str
+        A list of required metrics for the model.
     """
-    warnings.warn(
-        "`auto_label_units` is deprecated and will be removed in v0.105.0. "
-        "Please use `model_based_label_units` instead.",
-        FutureWarning,
-        stacklevel=2,
-    )
-    return model_based_label_units(*args, **kwargs)
+    from sklearn.pipeline import Pipeline
+
+    if model is None:
+        model, _ = load_model(
+            model_folder=model_folder, repo_id=repo_id, model_name=model_name, trust_model=trust_model, trusted=trusted
+        )
+
+    if not isinstance(model, Pipeline):
+        raise ValueError("The model must be an instance of sklearn.pipeline.Pipeline")
+
+    return list(model.feature_names_in_)
 
 
 def load_model(model_folder=None, repo_id=None, model_name=None, trust_model=False, trusted=None):
@@ -485,7 +512,7 @@ def _handle_backwards_compatibility_in_metrics(calculated_metrics, model_info):
     return calculated_metrics
 
 
-def _check_required_metrics_are_present(required_metrics, calculated_metrics):
+def check_required_metrics_are_present(required_metrics, calculated_metrics):
     # Check all the required metrics have been calculated, preserving the order expected by the pipeline
     if set(required_metrics).issubset(set(calculated_metrics.columns)):
         input_data = calculated_metrics[list(required_metrics)]
