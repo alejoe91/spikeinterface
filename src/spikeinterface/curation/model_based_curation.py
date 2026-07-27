@@ -534,7 +534,7 @@ def _handle_backwards_compatibility_in_metric_names(model_metric_names):
     updated_metric_names = []
     for metric_name in model_metric_names:
         if metric_name in _BACKWARD_COMPATIBILITY_MAP:
-            updated_metric_names.append(_BACKWARD_COMPATIBILITY_MAP[metric_name["name"]])
+            updated_metric_names.append(_BACKWARD_COMPATIBILITY_MAP[metric_name]["name"])
         else:
             updated_metric_names.append(metric_name)
     return updated_metric_names
