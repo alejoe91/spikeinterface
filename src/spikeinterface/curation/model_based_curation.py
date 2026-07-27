@@ -12,6 +12,13 @@ from spikeinterface.curation.train_manual_curation import (
     _format_metric_dataframe,
 )
 
+# Map old metric column names to new metric column names for backwards compatibility
+_BACKWARD_COMPATIBILITY_MAP = {
+    "peak_to_valley": {"name": "peak_to_trough_duration"},
+    "peak_trough_ratio": {"name": "peak_after_to_trough_ratio", "flip_sign": True},
+    "half_width": {"name": "trough_half_width"},
+}
+
 
 class ModelBasedClassification:
     """
@@ -318,7 +325,7 @@ def get_required_metrics_from_model(
     if not isinstance(model, Pipeline):
         raise ValueError("The model must be an instance of sklearn.pipeline.Pipeline")
 
-    return list(model.feature_names_in_)
+    return _handle_backwards_compatibility_in_metric_names(list(model.feature_names_in_))
 
 
 def load_model(model_folder=None, repo_id=None, model_name=None, trust_model=False, trusted=None):
@@ -497,19 +504,40 @@ def _handle_backwards_compatibility_in_metrics(calculated_metrics, model_info):
         return calculated_metrics
     si_version = model_info["requirements"].get("spikeinterface", None)
     if si_version is not None and parse(si_version) < parse("0.103.2"):
-        # if the model was trained with SI version < 0.103.2, we need to rename some metrics
+        # If the model was trained with SI version < 0.103.2, we need to rename some metrics
         calculated_metrics = calculated_metrics.copy()
-        # peak_to_trough_duration was named peak_to_valley
-        if "peak_to_trough_duration" in calculated_metrics.columns:
-            calculated_metrics = calculated_metrics.rename(columns={"peak_to_trough_duration": "peak_to_valley"})
-        # peak_after_to_trough_ratio was named peak_trough_ratio and had inverted sign
-        if "peak_after_to_trough_ratio" in calculated_metrics.columns:
-            calculated_metrics = calculated_metrics.rename(columns={"peak_after_to_trough_ratio": "peak_trough_ratio"})
-            calculated_metrics["peak_trough_ratio"] = -1 * calculated_metrics["peak_trough_ratio"]
-        # trough_half_width was named half_width
-        if "trough_half_width" in calculated_metrics.columns:
-            calculated_metrics = calculated_metrics.rename(columns={"trough_half_width": "half_width"})
+        # We need to rename the metrics and flip sign when needed
+        for old_name, updated_dict in _BACKWARD_COMPATIBILITY_MAP.items():
+            updated_name = updated_dict["name"]
+            if updated_name in calculated_metrics.columns:
+                calculated_metrics = calculated_metrics.rename(columns={updated_name: old_name})
+                if updated_dict.get("flip_sign", False):
+                    calculated_metrics[old_name] = -1 * calculated_metrics[old_name]
     return calculated_metrics
+
+
+def _handle_backwards_compatibility_in_metric_names(model_metric_names):
+    """
+    Handles backwards compatibility in metric names for models trained with older versions of SpikeInterface.
+    In recent versions, some metric names have been changed for clarity.
+
+    Parameters
+    ----------
+    model_metric_names : list of str
+        The list of metric names used in the model.
+
+    Returns
+    -------
+    list of str
+        The list of updated metric names for compatibility.
+    """
+    updated_metric_names = []
+    for metric_name in model_metric_names:
+        if metric_name in _BACKWARD_COMPATIBILITY_MAP:
+            updated_metric_names.append(_BACKWARD_COMPATIBILITY_MAP[metric_name])
+        else:
+            updated_metric_names.append(metric_name)
+    return updated_metric_names
 
 
 def check_required_metrics_are_present(required_metrics, calculated_metrics):
