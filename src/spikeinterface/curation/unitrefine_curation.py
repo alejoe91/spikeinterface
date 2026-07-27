@@ -6,7 +6,8 @@ from spikeinterface.curation.model_based_curation import model_based_label_units
 
 
 def unitrefine_label_units(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: SortingAnalyzer | None = None,
+    metrics: "pd.DataFrame | None" = None,
     noise_neural_classifier: str | Path | None = None,
     sua_mua_classifier: str | Path | None = None,
 ):
@@ -18,8 +19,10 @@ def unitrefine_label_units(
 
     Parameters
     ----------
-    sorting_analyzer : SortingAnalyzer
+    sorting_analyzer : SortingAnalyzer or None, default: None
         The sorting analyzer object containing the spike sorting results.
+    metrics : pd.DataFrame or None, default: None
+        A DataFrame with metrics for the units. If None, metrics will be computed from the sorting_analyzer.
     noise_neural_classifier : str or Path or None, default: None
         The path to the folder containing the model, a full path to a model (".skops")
         or a string to a repo on HuggingFace.
@@ -49,6 +52,18 @@ def unitrefine_label_units(
             "https://huggingface.co/AnoushkaJain3/models. You can also train models on your own data: "
             "see https://github.com/anoushkajain/UnitRefine for more details."
         )
+    if sorting_analyzer is None and metrics is None:
+        raise ValueError(
+            "At least one of sorting_analyzer or metrics must be provided. "
+            "If you have a Sorting object, you can create a SortingAnalyzer object using "
+            "`sorting_analyzer = SortingAnalyzer(sorting, recording)`."
+        )
+    if sorting_analyzer is not None and metrics is not None:
+        raise ValueError(
+            "Only one of sorting_analyzer or metrics should be provided. "
+            "If you have a Sorting object, you can create a SortingAnalyzer object using "
+            "`sorting_analyzer = SortingAnalyzer(sorting, recording)`."
+        )
 
     if noise_neural_classifier is not None:
         # 1. apply the noise/neural classification and remove noise
@@ -56,6 +71,7 @@ def unitrefine_label_units(
             warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
             noise_neuron_labels = model_based_label_units(
                 sorting_analyzer=sorting_analyzer,
+                metrics=metrics,
                 trust_model=True,
                 **get_model_based_classification_kwargs(noise_neural_classifier),
             )
@@ -65,18 +81,28 @@ def unitrefine_label_units(
                 "Please check the model used for classification."
             )
         noise_units = noise_neuron_labels[noise_neuron_labels["prediction"] == "noise"]
-        sorting_analyzer_neural = sorting_analyzer.remove_units(noise_units.index)
+        if sorting_analyzer is not None:
+            sorting_analyzer_neural = sorting_analyzer.remove_units(noise_units.index)
+            metrics_neural = None
+            unit_ids_neural = sorting_analyzer_neural.unit_ids
+        else:
+            metrics_neural = metrics.drop(index=noise_units.index)
+            sorting_analyzer_neural = None
+            unit_ids_neural = metrics_neural.index
     else:
         sorting_analyzer_neural = sorting_analyzer
+        metrics_neural = metrics
         noise_units = pd.DataFrame(columns=["prediction", "probability"])
+        unit_ids_neural = sorting_analyzer.unit_ids if sorting_analyzer is not None else metrics.index
 
     if sua_mua_classifier is not None:
         # 2. apply the sua/mua classification and aggregate results
-        if len(sorting_analyzer.unit_ids) > len(noise_units):
+        if len(unit_ids_neural) > 0:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
                 sua_mua_labels = model_based_label_units(
                     sorting_analyzer=sorting_analyzer_neural,
+                    metrics=metrics_neural,
                     trust_model=True,
                     **get_model_based_classification_kwargs(sua_mua_classifier),
                 )
