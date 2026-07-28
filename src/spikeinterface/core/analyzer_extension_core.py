@@ -192,6 +192,10 @@ class ComputeWaveforms(AnalyzerExtension):
             file_path = self._get_binary_extension_folder() / "waveforms.npy"
             mode = "memmap"
             copy = False
+        elif self.format == "zarr":
+            file_path = self._get_binary_extension_folder() / "waveforms"
+            mode = "zarr"
+            copy = False
         else:
             file_path = None
             mode = "shared_memory"
@@ -218,8 +222,11 @@ class ComputeWaveforms(AnalyzerExtension):
             verbose=verbose,
             **job_kwargs,
         )
-
-        self.data["waveforms"] = all_waveforms
+        if isinstance(all_waveforms, np.ndarray):
+            self.data["waveforms"] = all_waveforms
+        else:
+            # TODO: remove asarray when materialize is in
+            self.data["waveforms"] = np.asarray(all_waveforms)
 
     def _set_params(
         self,
