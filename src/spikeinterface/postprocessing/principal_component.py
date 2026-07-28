@@ -584,7 +584,7 @@ class ComputePrincipalComponents(AnalyzerExtension):
 
         unit_index = self.sorting_analyzer.sorting.id_to_index(unit_id)
         spike_mask = spikes["unit_index"] == unit_index
-        wfs = waveforms[spike_mask, :, :]
+        wfs = slice_rows(waveforms, spike_mask)
 
         sparsity = self.sorting_analyzer.sparsity
         if sparsity is not None:

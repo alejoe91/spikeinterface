@@ -785,6 +785,7 @@ def ms_to_samples(ms: float, sampling_frequency: float) -> int:
 def slice_rows(array: np.ndarray | zarr.Array, row_indices: np.ndarray | list, axis: int = 0) -> np.ndarray:
     """
     Slice an array to select specific indices/mask along one axis.
+    Note that this function creates a copy of the sliced data, so it is not a view.
 
     Parameters
     ----------

@@ -523,7 +523,7 @@ class ComputeTemplates(AnalyzerExtension):
         some_spikes = self.sorting_analyzer.get_extension("random_spikes").get_random_spikes()
         for unit_index, unit_id in enumerate(unit_ids):
             spike_mask = some_spikes["unit_index"] == unit_index
-            wfs = waveforms[spike_mask, :, :]
+            wfs = slice_rows(waveforms, spike_mask)
             if wfs.shape[0] == 0:
                 continue
 
