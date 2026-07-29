@@ -299,7 +299,7 @@ def test_set_properties_after_splits():
     sorting_post = NumpySorting.from_samples_and_labels([times2], [labels2], 10_000.0, unit_ids=["a", "x", "c"])
     sorting_post.set_property("quality", np.empty(3))
     # "x" is a new split sub-unit of "b"; "a" and "c" are kept
-    # In this case none of the new split unit ids are in pre_unit_ids, so kept_unit_ids=["a","c"]
+    # In this case none of the new split unit ids are in pre_unit_ids, so untouched_unit_ids=["a","c"]
     set_properties_after_splits(
         sorting_post,
         sorting,
