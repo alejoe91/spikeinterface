@@ -2,7 +2,6 @@ name: Test sorter images in Docker
 
 on: workflow_dispatch
 
-
 jobs:
   test-images:
     name: Test on (${{ matrix.os }})
@@ -21,11 +20,9 @@ jobs:
           python-version: '3.11'
           enable-cache: true
       - name: Python version
-        run:
-          python --version
+        run: python --version
       - name: Docker version
-        run:
-          docker --version
+        run: docker --version
       - name: Install dependencies
         run: |
           uv pip install --system pytest

@@ -2,7 +2,6 @@ name: Test sorter images in singularity
 
 on: workflow_dispatch
 
-
 jobs:
   test-images:
     name: Test on (${{ matrix.os }})
@@ -11,7 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         # "macos-latest", "windows-latest"
-        os: ["ubuntu-latest", ]
+        os: ["ubuntu-latest"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -25,11 +24,9 @@ jobs:
         with:
           singularity-version: 3.8.7
       - name: Python version
-        run:
-          python --version
+        run: python --version
       - name: Singularity version
-        run:
-          singularity --version
+        run: singularity --version
       - name: Install dependencies
         run: |
           uv pip install --system pytest
