@@ -746,7 +746,9 @@ def add_recording_to_zarr_group(recording: BaseRecording, zarr_group: zarr.Group
     zarr_group.attrs["sampling_frequency"] = float(recording.get_sampling_frequency())
     zarr_group.attrs["num_segments"] = int(recording.get_num_segments())
     # Use variable-length UTF-8 (stable zarr v3 spec) instead of fixed-length unicode.
-    channel_ids = recording.get_channel_ids()
+    channel_ids = recording.channel_ids
+    if channel_ids.dtype.kind in ("U", "S"):
+        channel_ids = channel_ids.astype("T")
     arr = zarr_group.create_array(name="channel_ids", data=channel_ids, compressors=None)
     dataset_paths = [f"traces_seg{i}" for i in range(recording.get_num_segments())]
 
