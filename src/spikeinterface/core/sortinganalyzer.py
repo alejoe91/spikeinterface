@@ -1039,10 +1039,12 @@ class SortingAnalyzer:
         saving_options = backend_options.get("saving_options", {})
 
         if not is_remote:
-            storage_options = {}
+            storage_options_kwargs = {}
+        else:
+            storage_options_kwargs = {"storage_options": storage_options}
 
         # Create zarr root group (and subgroups)
-        zarr_root = zarr.open(folder, mode="w", storage_options=storage_options)
+        zarr_root = zarr.open(folder, mode="w", **storage_options_kwargs)
         sorting_group = zarr_root.create_group("sorting")  # for sorting output
         recording_info_group = zarr_root.create_group("recording_info")  # rec_attributes and probe group
         zarr_root.create_group("extensions")  # used later
