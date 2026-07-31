@@ -25,8 +25,6 @@ on:
       - "src/spikeinterface/core/**"
       - ".github/scripts/serialization/**"
       - ".github/workflows/cross_version_serialization.yml"
-  schedule:
-    - cron: "0 4 * * 0" # weekly, Sunday 04:00 UTC
   workflow_dispatch:
 
 concurrency:
@@ -48,7 +46,6 @@ jobs:
           python-version: "3.11"
       - id: set
         env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
           # Support floor: oldest minor to test. Below this, installs fail on the CI
           # Python (numcodecs dependency rot in 0.100/0.101). Raise when 0.102 rots.
           MIN_VERSION_TO_TEST: "0.102" # We will change this when making breaking changes (hopefully not too often)
@@ -68,10 +65,6 @@ jobs:
           # patch of each minor
           candidates = [v for v in available if not v.is_prerelease and (v.major, v.minor) >= (floor.major, floor.minor)]
           minor_releases = [max(group) for _, group in groupby(candidates, key=lambda v: (v.major, v.minor))]
-
-          # on a pull request, test only the latest minor
-          if os.environ.get('GITHUB_EVENT_NAME') == 'pull_request':
-              minor_releases = minor_releases[-1:]
 
           # always round-trip against the branch itself as well
           print(json.dumps([str(v) for v in minor_releases] + ['dev']))
