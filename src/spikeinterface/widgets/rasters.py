@@ -235,8 +235,9 @@ class BaseRasterWidget(BaseWidget):
 
         # Add segment boundary lines if provided
         if getattr(dp, "segment_boundaries", None) is not None:
-            for boundary in dp.segment_boundaries:
-                scatter_ax.axvline(boundary, **dp.segment_boundary_kwargs)
+            if len(dp.segment_boundaries) > 1:
+                for boundary in dp.segment_boundaries:
+                    scatter_ax.axvline(boundary, **dp.segment_boundary_kwargs)
 
         if dp.plot_histograms:
             ax_hist = self.axes.flatten()[1]

@@ -73,6 +73,39 @@ class ComputeAmplitudeScalings(BaseSpikeVectorExtension):
             delta_collision_ms=delta_collision_ms,
         )
 
+    def _get_sparsity(self):
+        """
+        Resolve the ChannelSparsity used to compute the amplitude scalings, either from the
+        `sparsity` parameter, from the SortingAnalyzer sparsity, or dense.
+
+        Returns
+        -------
+        sparsity : ChannelSparsity
+            The sparsity used to extract local waveforms and to define spatial overlap between units.
+        """
+        recording = self.sorting_analyzer.recording
+
+        if self.sorting_analyzer.is_sparse() and self.params["sparsity"] is None:
+            sparsity = self.sorting_analyzer.sparsity
+        elif self.sorting_analyzer.is_sparse() and self.params["sparsity"] is not None:
+            sparsity = self.params["sparsity"]
+            # assert provided sparsity is sparser than the one in the waveform extractor
+            waveform_sparsity = self.sorting_analyzer.sparsity
+            assert np.all(
+                np.sum(waveform_sparsity.mask, 1) - np.sum(sparsity.mask, 1) > 0
+            ), "The provided sparsity needs to be sparser than the one in the waveform extractor!"
+        elif not self.sorting_analyzer.is_sparse() and self.params["sparsity"] is not None:
+            sparsity = self.params["sparsity"]
+        else:
+            if self.params["max_dense_channels"] is not None:
+                assert recording.get_num_channels() <= self.params["max_dense_channels"], (
+                    "Sparsity must be provided when the number of channels is "
+                    f"greater than {self.params['max_dense_channels']}. Alternatively, set max_dense_channels to None "
+                    "to compute amplitude scalings using dense waveforms."
+                )
+            sparsity = ChannelSparsity.create_dense(self.sorting_analyzer)
+        return sparsity
+
     def _get_pipeline_nodes(self):
 
         recording = self.sorting_analyzer.recording
@@ -109,26 +142,7 @@ class ComputeAmplitudeScalings(BaseSpikeVectorExtension):
         delta_collision_ms = self.params["delta_collision_ms"]
         delta_collision_samples = int(delta_collision_ms / 1000 * self.sorting_analyzer.sampling_frequency)
 
-        if self.sorting_analyzer.is_sparse() and self.params["sparsity"] is None:
-            sparsity = self.sorting_analyzer.sparsity
-        elif self.sorting_analyzer.is_sparse() and self.params["sparsity"] is not None:
-            sparsity = self.params["sparsity"]
-            # assert provided sparsity is sparser than the one in the waveform extractor
-            waveform_sparsity = self.sorting_analyzer.sparsity
-            assert np.all(
-                np.sum(waveform_sparsity.mask, 1) - np.sum(sparsity.mask, 1) > 0
-            ), "The provided sparsity needs to be sparser than the one in the waveform extractor!"
-        elif not self.sorting_analyzer.is_sparse() and self.params["sparsity"] is not None:
-            sparsity = self.params["sparsity"]
-        else:
-            if self.params["max_dense_channels"] is not None:
-                assert recording.get_num_channels() <= self.params["max_dense_channels"], (
-                    "Sparsity must be provided when the number of channels is "
-                    f"greater than {self.params['max_dense_channels']}. Alternatively, set max_dense_channels to None "
-                    "to compute amplitude scalings using dense waveforms."
-                )
-            sparsity = ChannelSparsity.create_dense(self.sorting_analyzer)
-        sparsity_mask = sparsity.mask
+        sparsity_mask = self._get_sparsity().mask
 
         spike_retriever_node = SpikeRetriever(
             sorting,
@@ -439,6 +453,60 @@ def find_collisions(spikes, spikes_within_margin, delta_collision_samples, spars
     return collision_spikes_dict
 
 
+def find_collision_indices(spikes, spike_index, delta_collision_samples, sparsity_mask):
+    """
+    Find the spikes colliding with the spike at `spike_index`.
+
+    This applies the same temporal and spatial overlap criteria as :py:func:`find_collisions`,
+    but for a single spike and on a full (concatenated) spike vector, so that collisions can be
+    recovered after the amplitude scalings have been computed (e.g. for plotting).
+
+    Parameters
+    ----------
+    spikes : np.array
+        The concatenated spike vector, with fields (sample_index, unit_index, segment_index).
+    spike_index : int
+        The index in `spikes` of the spike of interest.
+    delta_collision_samples : int
+        The maximum number of samples between two spikes to consider them as overlapping.
+    sparsity_mask : boolean mask
+        A num_units x num_channels boolean array indicating whether
+        the unit is represented on the channel.
+
+    Returns
+    -------
+    collision_indices : np.array
+        The indices in `spikes` of the colliding spikes, with `spike_index` at position 0.
+        If the spike has no collision, only `spike_index` is returned.
+    """
+    spike = spikes[spike_index]
+
+    # collisions cannot span segments, so restrict the search to the segment of the spike of interest
+    segment_start, segment_end = np.searchsorted(
+        spikes["segment_index"], [spike["segment_index"], spike["segment_index"] + 1]
+    )
+    segment_spikes = spikes[segment_start:segment_end]
+
+    # find the spikes that fall within a temporal window around the spike peak
+    i0, i1 = np.searchsorted(
+        segment_spikes["sample_index"],
+        [spike["sample_index"] - delta_collision_samples, spike["sample_index"] + delta_collision_samples],
+    )
+    candidate_indices = np.arange(segment_start + i0, segment_start + i1)
+    # exclude the spike itself, which is added back at position 0
+    candidate_indices = candidate_indices[candidate_indices != spike_index]
+
+    # keep only the spikes that also overlap spatially
+    spatially_overlapping = np.array(
+        [
+            _are_units_spatially_overlapping(sparsity_mask, spike["unit_index"], spikes[i]["unit_index"])
+            for i in candidate_indices
+        ],
+        dtype=bool,
+    )
+    return np.concatenate(([spike_index], candidate_indices[spatially_overlapping])).astype(int)
+
+
 def fit_collision(
     collision,
     traces_with_margin,
@@ -558,35 +626,46 @@ def _plot_collisions(sorting_analyzer, sparsity=None, num_collisions=None):
         The ChannelSparsity. If None, only main channels are plotted.
     num_collisions : int, default=None
         Number of collisions to plot. If None, all collisions are plotted.
+
+    Returns
+    -------
+    axes : list of matplotlib.axes.Axes
+        One axis per plotted collision.
     """
     assert sorting_analyzer.has_extension("amplitude_scalings"), "Could not find amplitude scalings extension!"
     sac = sorting_analyzer.get_extension("amplitude_scalings")
     handle_collisions = sac.params["handle_collisions"]
     assert handle_collisions, "Amplitude scalings was run without handling collisions!"
-    scalings = sac.get_data()
+    scalings = sac.get_data(return_data_name="amplitude_scalings")
+    collision_mask = sac.get_data(return_data_name="collision_mask")
 
-    # overlapping_mask = sac.overlapping_mask
-    # num_collisions = num_collisions or len(overlapping_mask)
     spikes = sorting_analyzer.sorting.to_spike_vector()
 
-    # TODO: this is broken, sac no longer (06/06/2024)
-    # has _extension_data and its collisions attribute is unused
-    collisions = sac._extension_data[f"collisions"]
-    collision_keys = list(collisions.keys())
-    num_collisions = num_collisions or len(collisions)
-    num_collisions = min(num_collisions, len(collisions))
+    # the collision mask only flags which spikes were fitted jointly, so the colliding
+    # spikes themselves are recovered with the same criteria used at compute time
+    sparsity_mask = sac._get_sparsity().mask
+    delta_collision_samples = int(
+        sac.params["delta_collision_ms"] / 1000 * sorting_analyzer.sampling_frequency,
+    )
 
-    for i in range(num_collisions):
-        overlapping_spikes = collisions[collision_keys[i]]
+    collision_spike_indices = np.flatnonzero(collision_mask)
+    if num_collisions is not None:
+        collision_spike_indices = collision_spike_indices[:num_collisions]
+
+    axes = []
+    for spike_index in collision_spike_indices:
+        collision_indices = find_collision_indices(spikes, spike_index, delta_collision_samples, sparsity_mask)
         ax = _plot_one_collision(
-            sorting_analyzer, collision_keys[i], overlapping_spikes, spikes, scalings=scalings, sparsity=sparsity
+            sorting_analyzer, spike_index, collision_indices, spikes, scalings=scalings, sparsity=sparsity
         )
+        axes.append(ax)
+    return axes
 
 
 def _plot_one_collision(
     sorting_analyzer,
     spike_index,
-    overlapping_spikes,
+    collision_indices,
     spikes,
     scalings=None,
     sparsity=None,
@@ -595,6 +674,26 @@ def _plot_one_collision(
 ):
     """
     Internal method for debugging collisions.
+
+    Parameters
+    ----------
+    sorting_analyzer : SortingAnalyzer
+        The SortingAnalyzer object.
+    spike_index : int
+        The index in `spikes` of the spike of interest.
+    collision_indices : np.array
+        The indices in `spikes` of the colliding spikes, with `spike_index` at position 0.
+    spikes : np.array
+        The concatenated spike vector.
+    scalings : np.array or None, default=None
+        The amplitude scalings, with the same length as `spikes`. If given, the scaled
+        templates and their sum (the fit) are plotted on top of the traces.
+    sparsity : ChannelSparsity or None, default=None
+        The ChannelSparsity. If None, only main channels are plotted.
+    cut_out_samples : int, default=100
+        Number of samples to plot before and after the colliding spikes.
+    ax : matplotlib.axes.Axes or None, default=None
+        The axis to plot on. If None, a new figure is created.
     """
     import matplotlib.pyplot as plt
 
@@ -602,33 +701,39 @@ def _plot_one_collision(
         fig, ax = plt.subplots()
 
     recording = sorting_analyzer.recording
-    nbefore_nafter_max = max(sorting_analyzer.nafter, sorting_analyzer.nbefore)
-    cut_out_samples = max(cut_out_samples, nbefore_nafter_max)
+    all_templates = get_dense_templates_array(sorting_analyzer, return_in_uV=True)
+    nbefore = _get_nbefore(sorting_analyzer)
+    nafter = all_templates.shape[1] - nbefore
+    cut_out_samples = max(cut_out_samples, max(nbefore, nafter))
 
+    overlapping_spikes = spikes[collision_indices]
+
+    sparse_indices = np.array([], dtype="int")
     if sparsity is not None:
         unit_inds_to_channel_indices = sparsity.unit_id_to_channel_indices
-        sparse_indices = np.array([], dtype="int")
         for spike in overlapping_spikes:
             sparse_indices_i = unit_inds_to_channel_indices[sorting_analyzer.unit_ids[spike["unit_index"]]]
             sparse_indices = np.union1d(sparse_indices, sparse_indices_i)
     else:
-        sparse_indices = np.unique(overlapping_spikes["channel_index"])
+        # the spike vector has no channel information, so fall back on the main channel of each unit
+        main_channel_indices = sorting_analyzer.get_main_channels(outputs="index", with_dict=True)
+        for spike in overlapping_spikes:
+            main_channel_index = main_channel_indices[sorting_analyzer.unit_ids[spike["unit_index"]]]
+            sparse_indices = np.union1d(sparse_indices, [main_channel_index])
 
     channel_ids = recording.channel_ids[sparse_indices]
 
     center_spike = overlapping_spikes[0]
-    max_delta = np.max(
-        [
-            np.abs(center_spike["sample_index"] - np.min(overlapping_spikes[1:]["sample_index"])),
-            np.abs(center_spike["sample_index"] - np.max(overlapping_spikes[1:]["sample_index"])),
-        ]
-    )
+    segment_index = center_spike["segment_index"]
+    max_delta = np.max(np.abs(overlapping_spikes["sample_index"].astype("int64") - center_spike["sample_index"]))
     sf = max(0, center_spike["sample_index"] - max_delta - cut_out_samples)
     ef = min(
         center_spike["sample_index"] + max_delta + cut_out_samples,
-        recording.get_num_samples(segment_index=center_spike["segment_index"]),
+        recording.get_num_samples(segment_index=segment_index),
     )
-    tr_overlap = recording.get_traces(start_frame=sf, end_frame=ef, channel_ids=channel_ids, return_in_uV=True)
+    tr_overlap = recording.get_traces(
+        segment_index=segment_index, start_frame=sf, end_frame=ef, channel_ids=channel_ids, return_in_uV=True
+    )
     ts = np.arange(sf, ef) / recording.sampling_frequency * 1000
     max_tr = np.max(np.abs(tr_overlap))
 
@@ -650,16 +755,19 @@ def _plot_one_collision(
     if scalings is not None:
         fitted_traces = np.zeros_like(tr_overlap)
 
-        all_templates = sorting_analyzer.get_all_templates()
-        for i, spike in enumerate(overlapping_spikes):
+        for spike, spike_scaling in zip(overlapping_spikes, scalings[collision_indices]):
             template = all_templates[spike["unit_index"]]
-            overlap_index = np.where(spikes == spike)[0][0]
-            template_scaled = scalings[overlap_index] * template
+            template_scaled = spike_scaling * template
             template_scaled_sparse = template_scaled[:, sparse_indices]
-            sample_start = spike["sample_index"] - sorting_analyzer.nbefore
+            sample_start = spike["sample_index"] - nbefore
             sample_end = sample_start + template_scaled_sparse.shape[0]
 
-            fitted_traces[sample_start - sf : sample_end - sf] += template_scaled_sparse
+            # the template can stick out of the plotted window, so clip it on both sides
+            start_in_window = max(sample_start - sf, 0)
+            end_in_window = min(sample_end - sf, fitted_traces.shape[0])
+            fitted_traces[start_in_window:end_in_window] += template_scaled_sparse[
+                start_in_window - (sample_start - sf) : end_in_window - (sample_start - sf)
+            ]
 
             for ch, temp in enumerate(template_scaled_sparse.T):
                 ts_template = np.arange(sample_start, sample_end) / recording.sampling_frequency * 1000
