@@ -333,7 +333,7 @@ def _make_pipeline_list_from_recording_dict(recording_dict):
             if key not in ["recording", "parent_recording"]
         }
 
-        preprocessing_list.append({"name": preprocessor_function.__name__, "kwargs": pp_kwargs})
+        preprocessing_list.append({"name": preprocessor_function.__name__, "params": pp_kwargs})
 
     return preprocessing_list
 
