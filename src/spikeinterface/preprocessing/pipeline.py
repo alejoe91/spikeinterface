@@ -7,19 +7,17 @@ from spikeinterface.core.zarrextractors import super_zarr_open
 from spikeinterface.preprocessing.preprocessing_classes import preprocessor_dict, _all_preprocesser_dict
 
 pp_names_to_functions = {preprocessor.__name__: preprocessor for preprocessor in preprocessor_dict.values()}
-pp_names_to_classes = {pp_function.__name__: pp_class for pp_class, pp_function in _all_preprocesser_dict.items()}
 
 
 class BasePipeline:
     """
     Base processing pipeline to construct a processing pipeline from a list of processing steps and their params.
 
-    Inherited classes should define the `function_names_to_functions` and `function_names_to_classes` attributes,
-    which map the names of processing steps to their corresponding functions and classes, respectively.
+    Inherited classes should define the `function_names_to_functions` attributes,
+    which map the names of processing steps to their corresponding functions, respectively.
     """
 
     function_names_to_functions = dict()
-    function_names_to_classes = dict()
 
     def __init__(self, preprocessor_list_or_dict):
         non_supported_preprocessors = []
@@ -130,9 +128,10 @@ class BasePipeline:
                     params[k] = substituted_recording
 
             if not apply_precomputed_kwargs:
-                preprocessor_class = self.function_names_to_classes[preprocessor_name]
-                precomputable_kwarg_names = preprocessor_class._precomputable_kwarg_names
-                dont_apply_kwargs += precomputable_kwarg_names
+                preprocessor_function = self.function_names_to_functions[preprocessor_name]
+                if hasattr(preprocessor_function, "_precomputable_kwarg_names"):
+                    precomputable_kwarg_names = preprocessor_function._precomputable_kwarg_names
+                    dont_apply_kwargs += precomputable_kwarg_names
 
             non_rec_params = {key: value for key, value in params.items() if key not in dont_apply_kwargs}
             pp_output = self.function_names_to_functions[preprocessor_name](recording, **non_rec_params)
