@@ -164,7 +164,6 @@ class PreprocessingPipeline(BasePipeline):
     """
 
     function_names_to_functions = pp_names_to_functions
-    function_names_to_classes = pp_names_to_classes
 
 
 def apply_preprocessing_pipeline(
