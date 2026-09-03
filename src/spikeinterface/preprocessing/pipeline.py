@@ -1,5 +1,6 @@
 from pathlib import Path
 import inspect
+import warnings
 from spikeinterface.core import BaseRecording
 from spikeinterface.core.core_tools import is_dict_extractor, is_path_remote
 from spikeinterface.core.zarrextractors import super_zarr_open
@@ -9,23 +10,34 @@ pp_names_to_functions = {preprocessor.__name__: preprocessor for preprocessor in
 pp_names_to_classes = {pp_function.__name__: pp_class for pp_class, pp_function in _all_preprocesser_dict.items()}
 
 
-class ABCPipeline:
+class BasePipeline:
+    """
+    Base processing pipeline to construct a processing pipeline from a list of processing steps and their params.
+
+    Inherited classes should define the `function_names_to_functions` and `function_names_to_classes` attributes,
+    which map the names of processing steps to their corresponding functions and classes, respectively.
+    """
+
     function_names_to_functions = dict()
     function_names_to_classes = dict()
 
-    def __init__(self, preprocessor_dict_or_list):
+    def __init__(self, preprocessor_list_or_dict):
         non_supported_preprocessors = []
         # convert dicts to lists
         preprocessor_list = []
-        if isinstance(preprocessor_dict_or_list, dict):
-            for key, value in preprocessor_dict_or_list.items():
-                step = dict(name=key, kwargs=value)
+        if isinstance(preprocessor_list_or_dict, dict):
+            for key, value in preprocessor_list_or_dict.items():
+                step = dict(name=key, params=value)
                 preprocessor_list.append(step)
-        elif isinstance(preprocessor_dict_or_list, list):
-            preprocessor_list = preprocessor_dict_or_list
+        elif isinstance(preprocessor_list_or_dict, list):
+            preprocessor_list = preprocessor_list_or_dict
             assert all(
-                isinstance(step, dict) and "name" in step and "kwargs" in step for step in preprocessor_list
-            ), "Each step in the preprocessor list must be a dict with 'name' and 'kwargs' keys."
+                isinstance(step, dict) and "name" in step for step in preprocessor_list
+            ), "Each step in the preprocessor list must be a dict with 'name' key."
+
+        for step in preprocessor_list:
+            if "params" not in step:
+                step["params"] = {}
 
         for preprocessor in preprocessor_list:
             if preprocessor["name"] not in self.function_names_to_functions.keys():
@@ -33,29 +45,31 @@ class ABCPipeline:
 
         if len(non_supported_preprocessors) > 0:
             raise TypeError(
-                f"The preprocessors '{non_supported_preprocessors}' are not supported by the `PreprocessingPipeline`. "
+                f"The preprocessors '{non_supported_preprocessors}' are not supported by the pipeline. "
                 f"Available preprocessors are: {list(self.function_names_to_functions.keys())}"
             )
 
         self.preprocessor_list = preprocessor_list
 
     def __repr__(self):
-        txt = "PreprocessingPipeline: \tRaw Recording \u2192 "
+        txt = "Pipeline: \tRaw \u2192 "
         for preprocessor in self.preprocessor_list:
             txt += str(preprocessor["name"]) + " \u2192 "
-        txt += "Preprocessed Recording"
+        txt += "Preprocessed"
         return txt
 
     def _repr_html_(self):
 
-        all_kwargs = _get_all_kwargs_and_values(self)
+        all_kwargs_list = _get_all_kwargs_and_values(self)
 
         html_text = "<div'>"
         html_text += "<strong>PreprocessingPipeline</strong>"
         html_text += "<div style='border:1px solid #ccc; padding:10px;'><strong>Initial Recording</strong></div>"
         html_text += "<div style='margin: auto; text-indent: 30px;'>&#x2193;</div>"
 
-        for a, (preprocessor, kwargs) in enumerate(all_kwargs.items()):
+        for all_kwargs in all_kwargs_list:
+            preprocessor = all_kwargs["name"]
+            kwargs = all_kwargs["kwargs"]
             html_text += "<details style='border:1px solid #ddd; padding:5px;'>"
             html_text += f"<summary><strong>{preprocessor}</strong></summary>"
 
@@ -94,10 +108,10 @@ class ABCPipeline:
         instantiated_recordings = {"raw": recording}
         for step in self.preprocessor_list:
             preprocessor_name = step["name"]
-            kwargs = step["kwargs"].copy()
+            params = step["params"].copy()
             dont_apply_kwargs = ["recording", "parent_recording"]
 
-            for k, v in kwargs.items():
+            for k, v in params.items():
                 if isinstance(v, str) and "pipeline[" in v:
                     if "recording" not in k:
                         raise ValueError(
@@ -113,22 +127,22 @@ class ABCPipeline:
                     substituted_recording = instantiated_recordings.get(rec_name)
                     if substituted_recording is None:
                         raise ValueError(f"Cannot find recording '{rec_name}' from previous steps in the pipeline.")
-                    kwargs[k] = substituted_recording
+                    params[k] = substituted_recording
 
             if not apply_precomputed_kwargs:
                 preprocessor_class = self.function_names_to_classes[preprocessor_name]
                 precomputable_kwarg_names = preprocessor_class._precomputable_kwarg_names
                 dont_apply_kwargs += precomputable_kwarg_names
 
-            non_rec_kwargs = {key: value for key, value in kwargs.items() if key not in dont_apply_kwargs}
-            pp_output = self.function_names_to_functions[preprocessor_name](recording, **non_rec_kwargs)
+            non_rec_params = {key: value for key, value in params.items() if key not in dont_apply_kwargs}
+            pp_output = self.function_names_to_functions[preprocessor_name](recording, **non_rec_params)
             recording = pp_output
             instantiated_recordings[preprocessor_name] = recording
 
         return recording
 
 
-class PreprocessingPipeline(ABCPipeline):
+class PreprocessingPipeline(BasePipeline):
     """
     A preprocessing pipeline, containing ordered preprocessing steps.
 
@@ -168,7 +182,7 @@ def apply_preprocessing_pipeline(
     recording_or_dict : BaseRecording | dict
         The initial recording or a dictionary of recordings
     pipeline : PreprocessingPipeline | list | dict
-        Dictionary containing preprocessing steps and their kwargs, a list of preprocessing steps, or a pipeline object.
+        A list of preprocessing steps, or a pipeline object.
         If None, the original recording is returned.
     apply_precomputed_kwargs : Bool, default: True
         Some preprocessing steps (e.g. Whitening) contain arguments which are computed
@@ -193,9 +207,15 @@ def apply_preprocessing_pipeline(
 
     if isinstance(pipeline, PreprocessingPipeline):
         pipeline = pipeline
-    elif isinstance(pipeline, dict):
-        pipeline = PreprocessingPipeline(pipeline)
     elif isinstance(pipeline, list):
+        pipeline = PreprocessingPipeline(pipeline)
+    elif isinstance(pipeline, dict):
+        warnings.warn(
+            "Passing a dict to `apply_preprocessing_pipeline` is deprecated and will be removed in 0.106.0. "
+            "Please pass a list of preprocessing steps instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         pipeline = PreprocessingPipeline(pipeline)
     else:
         raise TypeError("`pipeline` must be a `PreprocessingPipeline`, a list, or a dict")
@@ -370,14 +390,14 @@ def _get_all_kwargs_and_values(my_pipeline):
     including the default values.
     """
 
-    all_kwargs = {}
+    all_kwargs_list = []
     for preprocessor in my_pipeline.preprocessor_list:
 
         preprocessor_name = preprocessor["name"].split(".")[-1]
         pp_function = my_pipeline.function_names_to_functions[preprocessor["name"].split(".")[-1]]
         signature = inspect.signature(pp_function)
 
-        all_kwargs[preprocessor_name] = {}
+        all_kwargs = {"name": preprocessor_name, "kwargs": {}}
 
         for _, value in signature.parameters.items():
             par_name = str(value).split("=")[0].split(":")[0]
@@ -399,6 +419,7 @@ def _get_all_kwargs_and_values(my_pipeline):
                     if default_value != pipeline_value:
                         pipeline_value = default_value
 
-                all_kwargs[preprocessor_name][par_name] = pipeline_value
+                all_kwargs["kwargs"][par_name] = pipeline_value
 
-    return all_kwargs
+        all_kwargs_list.append(all_kwargs)
+    return all_kwargs_list
