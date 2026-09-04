@@ -50,10 +50,10 @@ class BasePipeline:
         self.preprocessor_list = preprocessor_list
 
     def __repr__(self):
-        txt = "Pipeline: \tRaw \u2192 "
+        txt = "Pipeline: \tinput \u2192 "
         for preprocessor in self.preprocessor_list:
             txt += str(preprocessor["name"]) + " \u2192 "
-        txt += "Preprocessed"
+        txt += "preprocessed"
         return txt
 
     def _repr_html_(self):
@@ -62,7 +62,7 @@ class BasePipeline:
 
         html_text = "<div'>"
         html_text += "<strong>PreprocessingPipeline</strong>"
-        html_text += "<div style='border:1px solid #ccc; padding:10px;'><strong>Initial Recording</strong></div>"
+        html_text += "<div style='border:1px solid #ccc; padding:10px;'><strong>input</strong></div>"
         html_text += "<div style='margin: auto; text-indent: 30px;'>&#x2193;</div>"
 
         for all_kwargs in all_kwargs_list:
@@ -78,7 +78,7 @@ class BasePipeline:
             html_text += "</details>"
 
         html_text += """<div style='margin: auto; text-indent: 30px;'>&#x2193;</div>"""
-        html_text += "<div style='border:1px solid #ccc; padding:10px;'><strong>Preprocessed Recording</strong></div>"
+        html_text += "<div style='border:1px solid #ccc; padding:10px;'><strong>preprocessed</strong></div>"
         html_text += "</div>"
 
         return html_text
@@ -409,9 +409,8 @@ def _get_all_kwargs_and_values(my_pipeline):
                 except:
                     default_value = None
 
-                pipeline_value = my_pipeline.preprocessor_list[my_pipeline.preprocessor_list.index(preprocessor)][
-                    "kwargs"
-                ].get(par_name)
+                preprocessor_index = my_pipeline.preprocessor_list.index(preprocessor)
+                pipeline_value = my_pipeline.preprocessor_list[preprocessor_index]["params"].get(par_name)
 
                 if pipeline_value is None:
                     if default_value != pipeline_value:
