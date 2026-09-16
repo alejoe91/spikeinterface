@@ -55,6 +55,8 @@ def define_function_handling_dict_from_class(source_class, name):
     source_class_or_dict_of_sources_classes.__signature__ = inspect.signature(source_class)
     source_class_or_dict_of_sources_classes.__doc__ = source_class.__doc__
     source_class_or_dict_of_sources_classes.__name__ = name
+    # propagate the _precomputable_kwarg_names attribute from the source class to the wrapper function
+    source_class_or_dict_of_sources_classes._precomputable_kwarg_names = source_class._precomputable_kwarg_names
 
     return source_class_or_dict_of_sources_classes
 
@@ -819,6 +821,11 @@ def save_properties_to_binary_folder(folder: str | Path, extractor: "BaseExtract
     for key in extractor.get_property_keys():
         values = extractor.get_property(key)
         np.save(folder / f"{key}.npy", values, allow_pickle=True)
+
+
+def samples_to_ms(samples: int, sampling_frequency: float) -> float:
+    """Convert a duration in samples to milliseconds."""
+    return samples / sampling_frequency * 1000.0
 
 
 def slice_rows(array: np.ndarray | zarr.Array, row_indices: np.ndarray | list) -> np.ndarray:
