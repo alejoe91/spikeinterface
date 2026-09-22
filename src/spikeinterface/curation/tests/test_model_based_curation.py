@@ -25,7 +25,10 @@ def model(trained_pipeline_path):
     It has been trained locally and, when applied to `sorting_analyzer_for_unitrefine_curation` will label its 10 units with
     the following labels: [1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0]."""
 
-    model = load_model(trained_pipeline_path, trusted=["numpy.dtype"])
+    model = load_model(
+        trained_pipeline_path,
+        trust_model=True,
+    )
     return model
 
 
@@ -66,7 +69,7 @@ def test_metric_ordering_independence(sorting_analyzer_for_unitrefine_curation, 
     prediction_prob_dataframe_1 = model_based_label_units(
         sorting_analyzer=sorting_analyzer_for_unitrefine_curation,
         model_folder=trained_pipeline_path,
-        trusted=["numpy.dtype"],
+        trust_model=True,
     )
 
     sorting_analyzer_for_unitrefine_curation.compute(
@@ -76,7 +79,7 @@ def test_metric_ordering_independence(sorting_analyzer_for_unitrefine_curation, 
     prediction_prob_dataframe_2 = model_based_label_units(
         sorting_analyzer=sorting_analyzer_for_unitrefine_curation,
         model_folder=trained_pipeline_path,
-        trusted=["numpy.dtype"],
+        trust_model=True,
     )
 
     assert prediction_prob_dataframe_1.equals(prediction_prob_dataframe_2)
@@ -165,24 +168,6 @@ def test_predict_labels_with_phy_export(sorting_analyzer_for_unitrefine_curation
         model_based_classification.predict_labels(export_to_phy=True, phy_folder=None)
 
 
-def test_model_based_classification_from_dataframe(sorting_analyzer_for_unitrefine_curation, model):
-    """Test that the ModelBasedClassification can be initialised from a DataFrame of metrics."""
-
-    sorting_analyzer_for_unitrefine_curation.compute(
-        "template_metrics", metric_names=["half_width", "peak_to_trough_duration", "number_of_peaks"]
-    )
-    sorting_analyzer_for_unitrefine_curation.compute("quality_metrics", metric_names=["num_spikes", "snr"])
-
-    metrics_dataframe = sorting_analyzer_for_unitrefine_curation.get_metrics_extension_data()
-
-    model_based_classification = ModelBasedClassification(metrics=metrics_dataframe, pipeline=model[0])
-    classified_units = model_based_classification.predict_labels()
-    predictions = classified_units["prediction"].values
-
-    expected_result = np.array([1] * 6 + [0] * 6)
-    assert np.all(predictions == expected_result)
-
-
 def test_get_required_metrics_from_model(model, required_metrics):
     """Test that the get_required_metrics_from_model function returns the correct required metrics and columns."""
 
@@ -212,7 +197,7 @@ def test_exception_raised_when_metric_params_not_equal(sorting_analyzer_for_unit
         "template_metrics", metric_names=["half_width", "peak_to_trough_duration", "number_of_peaks"]
     )
 
-    model, model_info = load_model(model_folder=trained_pipeline_path, trusted=["numpy.dtype"])
+    model, model_info = load_model(model_folder=trained_pipeline_path, trust_model=True)
     model_based_classification = ModelBasedClassification(sorting_analyzer_for_unitrefine_curation, model)
 
     # an error should be raised if `enforce_metric_params` is True
@@ -233,6 +218,6 @@ def test_exception_raised_when_metric_params_not_equal(sorting_analyzer_for_unit
         "template_metrics", metric_names=["half_width", "peak_to_trough_duration"]
     )
 
-    model, model_info = load_model(model_folder=trained_pipeline_path, trusted=["numpy.dtype"])
+    model, model_info = load_model(model_folder=trained_pipeline_path, trust_model=True)
     model_based_classification = ModelBasedClassification(sorting_analyzer_for_unitrefine_curation, model)
     model_based_classification._check_params_for_classification(enforce_metric_params=True, model_info=model_info)

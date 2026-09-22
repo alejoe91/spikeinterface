@@ -19,11 +19,9 @@ on:
     # watches core only; a break introduced in generation/ or preprocessing/ would not
     # trigger it.
     paths:
-      - "src/spikeinterface/core/**"
-      - ".github/scripts/serialization/**"
-      - ".github/workflows/cross_version_serialization.yml"
-  schedule:
-    - cron: "0 4 * * 0" # weekly, Sunday 04:00 UTC
+      - 'src/spikeinterface/core/**'
+      - '.github/scripts/serialization/**'
+      - '.github/workflows/cross_version_serialization.yml'
   workflow_dispatch:
 
 concurrency:

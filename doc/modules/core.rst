@@ -175,8 +175,9 @@ the spiketrain, which are optimally organized for specific types of calculation.
 
 Computations involving combined recording-sorting information, such as fetching recording chunks and
 spiketrain chunks to accumulate waveforms, are often quickest when spikes are time-ordered. For
-this use case, we  use an internal representation called the `spike_vector`. This is a unique buffer:
-a numpy.array with dtype `[("sample_index", "int64"), ("unit_index", "int64"), ("segment_index", "int64")]`.
+this use case, we use an internal representation called the `spike_vector`, obtained by calling
+`sorting.to_spike_vector()`. This is a unique buffer: a numpy.array with dtype
+`[("sample_index", "int64"), ("unit_index", "int64"), ("segment_index", "int64")]`.
 
 For computations which are done unit-by-unit, like computing isi-violations per unit, it is better that
 spikes from a single unit are concurrent in memory. For these other cases, we can re-order the
@@ -185,8 +186,8 @@ spikes from a single unit are concurrent in memory. For these other cases, we ca
 * order by unit, then segment, then sample
 * order by segment, then unit, then sample
 
-This is done using `sorting.to_reordered_spike_vector()`. The first time a reordering is done, the
-reordered spiketrain is cached in memory by default. Users should rarely have to worry about these
+This is done using `sorting.to_reordered_spike_vector()`. The first time a reordering is done,
+the reordered spiketrain is cached in memory by default. Users should rarely have to worry about these
 details, but developers should keep memory layout in mind when implementing new features.
 
 
@@ -437,7 +438,7 @@ All computed extensions will be automatically propagated or merged when curating
 
 
 Handling very large datasets: ``lazy`` mode
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For very large datasets with tens-to-hundreds millions of spikes, the :code:`SortingAnalyzer` computations can be very
 memory intensive. By default, in fact, the :code:`SortingAnalyzer` computes and stores all the data in memory.
@@ -701,7 +702,7 @@ Parallel processing and job_kwargs
 The :py:mod:`~spikeinterface.core` module also contains the basic tools used throughout SpikeInterface for parallel
 processing of recordings.
 In general, parallelization is achieved by splitting the recording in many small time chunks and processing
-them in parallel (for more details, see the :py:class:`~spikeinterface.core.ChunkRecordingExecutor` class).
+them in parallel (for more details, see the :py:class:`~spikeinterface.core.TimeSeriesChunkExecutor` class).
 
 Many functions support parallel processing (e.g., :py:func:`~spikeinterface.core.extract_waveforms`, :code:`save`,
 and many more). All of these functions, in addition to other arguments, also accept the so-called **job_kwargs**.
@@ -1006,7 +1007,7 @@ LEGACY objects
 --------------
 
 WaveformExtractor
-^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~
 
 This is now a legacy object that can still be accessed through the :py:class:`MockWaveformExtractor`. It is kept
 for backward compatibility. You can convert a ``WaveformExtractor`` to a ``SortingAnalyzer``

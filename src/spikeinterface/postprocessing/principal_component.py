@@ -12,7 +12,7 @@ import numpy as np
 from spikeinterface.core.sortinganalyzer import register_result_extension, AnalyzerExtension
 from spikeinterface.core.core_tools import slice_rows, materialize_array
 from spikeinterface.core.job_tools import TimeSeriesChunkExecutor, _shared_job_kwargs_doc, fix_job_kwargs
-from spikeinterface.core.analyzer_extension_core import _inplace_sparse_realign_waveforms
+from spikeinterface.core.analyzer_extension_core import _inplace_sparse_realign_waveforms, _select_channels_sparse_data
 
 _possible_modes = ["by_channel_local", "by_channel_global", "concatenated"]
 
@@ -86,7 +86,7 @@ class ComputePrincipalComponents(AnalyzerExtension):
 
     def _select_units_extension_data(self, unit_ids):
 
-        keep_unit_indices = np.flatnonzero(np.isin(self.sorting_analyzer.unit_ids, unit_ids))
+        keep_unit_indices = self.sorting_analyzer.sorting.ids_to_indices(unit_ids)
         some_spikes = self.sorting_analyzer.get_extension("random_spikes").get_random_spikes()
         keep_spike_mask = np.isin(some_spikes["unit_index"], keep_unit_indices)
 
@@ -98,11 +98,24 @@ class ComputePrincipalComponents(AnalyzerExtension):
                 new_data[k] = v
         return new_data
 
+    def _select_channels_extension_data(self, channel_ids):
+
+        old_pcs = self.data["pca_projection"]
+        new_pcs = _select_channels_sparse_data(self.sorting_analyzer, old_pcs, channel_ids)
+
+        data = {"pca_projection": new_pcs}
+
+        for key, value in self.data.items():
+            if key != "pca_projection":
+                data[key] = value
+
+        return data
+
     def _merge_extension_data(
         self, merge_unit_groups, new_unit_ids, new_sorting_analyzer, keep_mask=None, verbose=False, **job_kwargs
     ):
 
-        pca_projections = self.data["pca_projection"]
+        pca_projections = materialize_array(self.data["pca_projection"])
         some_spikes = self.sorting_analyzer.get_extension("random_spikes").get_random_spikes()
 
         if keep_mask is not None:
@@ -114,11 +127,6 @@ class ComputePrincipalComponents(AnalyzerExtension):
 
         old_sparsity = self.sorting_analyzer.sparsity
         if old_sparsity is not None:
-            if keep_mask is None:
-                # about to mutate pca_projections in place below (sparse realignment): we need a
-                # genuinely independent, writable buffer rather than sharing the original reference
-                pca_projections = materialize_array(pca_projections)
-
             # we need a realignement inside each group because we take the channel intersection sparsity
             # the story is same as in "waveforms" extension
             for group_ids in merge_unit_groups:
@@ -147,7 +155,11 @@ class ComputePrincipalComponents(AnalyzerExtension):
 
     def _split_extension_data(self, split_units, new_unit_ids, new_sorting_analyzer, verbose=False, **job_kwargs):
         # splitting only changes random spikes assignments
-        return self.data.copy()
+        new_data = dict(pca_projection=materialize_array(self.data["pca_projection"]))
+        for k, v in self.data.items():
+            if "model" in k:
+                new_data[k] = v
+        return new_data
 
     def get_pca_model(self):
         """
